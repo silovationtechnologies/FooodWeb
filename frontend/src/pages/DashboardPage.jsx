@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabase';
 import Chart from 'chart.js/auto';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
+import AdvancedAnalytics from '../components/AdvancedAnalytics';
 
 /* ─── Global Styles ─── */
 const STYLES = `
@@ -921,6 +922,11 @@ export default function DashboardPage({ theme }) {
             <div className="ldb-label">Top Items · {period === 'daily' ? 'Today' : 'This Month'}</div>
             <Leaderboard items={leaderboard} />
           </TiltCard>
+
+          {/* ── Advanced Analytics ── */}
+          <div style={{ marginTop: 56, paddingTop: 36, borderTop: '1px solid rgba(255,255,255,.07)' }}>
+            <AdvancedAnalytics />
+          </div>
         </div>
       </div>
     </>
