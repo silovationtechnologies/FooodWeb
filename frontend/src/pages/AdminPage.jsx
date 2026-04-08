@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from '../lib/supabase';
 import OrderPopup from '../components/OrderPopup';
 import InvoiceModal from '../components/InvoiceModal';
@@ -37,25 +37,27 @@ const AdminPage = () => {
     const [payPhone, setPayPhone] = useState('');
     const [payName, setPayName] = useState('');
     const [payExists, setPayExists] = useState(false);
-
-    // Table Transfer/Combine State
-    const [showTransferModal, setShowTransferModal] = useState(false);
-    const [showCombineModal, setShowCombineModal] = useState(false);
-    const [tableActionTarget, setTableActionTarget] = useState('');
-
-    // Parcel Handover Payment State
-    const [parcelHandoverId, setParcelHandoverId] = useState(null);
-
+    const [handoverOrderId, setHandoverOrderId] = useState(null);
+    const [showTransferModal, setShowTransferModal] = useState(null);
+    const [showCombineModal, setShowCombineModal] = useState(null);
+    const [showSettingsMenu, setShowSettingsMenu] = useState(false);
+    
+    // Split Payment & Manual Edit States
+    const [editTotal, setEditTotal] = useState(0);
+    const [isSplitPayment, setIsSplitPayment] = useState(false);
+    const [splitCashAmount, setSplitCashAmount] = useState(0);
+    const [splitOnlineAmount, setSplitOnlineAmount] = useState(0);
+    
     // Security Utility: Sanitize inputs to prevent XSS
     const sanitize = (str) => {
         if (typeof str !== 'string') return str;
         return str.replace(/[<>]/g, '').trim();
     };
-
+    
     // Recipe Modal State
     const [newMatId, setNewMatId] = useState('');
     const [newMatQty, setNewMatQty] = useState('');
-
+    
     const detectedIp = "10.18.40.43";
 
     // --- Inventory State (Lifted) ---
@@ -93,9 +95,7 @@ const AdminPage = () => {
         const { data } = await supabase.from('menu_items').select('*');
         if (data) {
             setMenuItems(data);
-            return data;
         }
-        return [];
     };
 
     const fetchTables = async () => {
@@ -145,27 +145,7 @@ const AdminPage = () => {
 
     const fetchInitialData = async () => {
         setLoading(true);
-        const results = await Promise.all([fetchTables(), fetchOrders(), fetchMenuItems(), fetchCategories(), fetchCustomers()]);
-        const fetchedMenu = results[2] || []; // results[2] corresponds to fetchMenuItems return value
-
-        // Auto-seed required drinks if missing
-        const requiredDrinks = [
-            { name: 'Water Bottle', price: 20, category: 'cold', emoji: '💧', description: 'Chilled mineral water', is_veg: true },
-            { name: 'Sprite', price: 40, category: 'cold', emoji: '🥤', description: 'Lemon-lime soda', is_veg: true },
-            { name: 'Thumbs Up', price: 40, category: 'cold', emoji: '🥤', description: 'Strong cola', is_veg: true },
-        ];
-
-        let needsRefresh = false;
-        for (const drink of requiredDrinks) {
-            if (!fetchedMenu.find(m => m.name.toLowerCase() === drink.name.toLowerCase())) {
-                await supabase.from('menu_items').insert(drink);
-                needsRefresh = true;
-            }
-        }
-
-        if (needsRefresh) {
-            await fetchMenuItems(); // Refresh after seeding
-        }
+        await Promise.all([fetchTables(), fetchOrders(), fetchMenuItems(), fetchCategories(), fetchCustomers()]);
         setLoading(false);
     };
 
@@ -196,6 +176,52 @@ const AdminPage = () => {
         };
     }, []);
 
+    // Audio Context Ref to persist across renders
+    const audioContextRef = useRef(null);
+
+    // Initialize/Resume AudioContext on first user gesture
+    useEffect(() => {
+        const initAudio = () => {
+            if (!audioContextRef.current) {
+                audioContextRef.current = new (window.AudioContext || window.webkitAudioContext)();
+            }
+            if (audioContextRef.current.state === 'suspended') {
+                audioContextRef.current.resume();
+            }
+            // We don't remove listener yet, as we might need to resume again 
+            // if it suspends (though usually once is enough)
+        };
+        document.addEventListener('click', initAudio);
+        return () => document.removeEventListener('click', initAudio);
+    }, []);
+
+    // Function to play high-frequency chime via Web Audio API (Reliable)
+    const playOrderBeep = () => {
+        try {
+            if (!audioContextRef.current) return;
+            
+            const ctx = audioContextRef.current;
+            if (ctx.state === 'suspended') ctx.resume();
+
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(1400, ctx.currentTime); // High pitch frequency
+            
+            gain.gain.setValueAtTime(0.3, ctx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.3);
+            
+            osc.connect(gain);
+            gain.connect(ctx.destination);
+            
+            osc.start();
+            osc.stop(ctx.currentTime + 0.3);
+        } catch (err) {
+            console.log('Audio failed:', err);
+        }
+    };
+
     useEffect(() => {
         if (!newOrder && orders.length > 0) {
             const unseen = orders.find(o => o.status === 'new' && notifiedOrderTotals[o.id] !== o.total);
@@ -206,10 +232,44 @@ const AdminPage = () => {
         }
     }, [orders, newOrder, notifiedOrderTotals]);
 
+    // Sync editTotal when selectedTableOrder changes
+    useEffect(() => {
+        if (selectedTableOrder) {
+            setEditTotal(selectedTableOrder.total);
+        }
+    }, [selectedTableOrder?.total, selectedTableOrder?.id]);
+
+    // Keep active modal in sync with realtime order updates
+    useEffect(() => {
+        if (selectedTableOrder) {
+            const current = orders.find(o => o.id === selectedTableOrder.id);
+            if (current && JSON.stringify(current) !== JSON.stringify(selectedTableOrder)) {
+                setSelectedTableOrder(current);
+            }
+        }
+    }, [orders]);
+
+    // Handle looping beep for new orders
+    useEffect(() => {
+        let interval;
+        if (newOrder) {
+            // Play initial beep
+            playOrderBeep();
+            
+            // Start looping interval
+            interval = setInterval(() => {
+                playOrderBeep();
+            }, 300); // Beep every 0.3 seconds
+        }
+        return () => {
+            if (interval) clearInterval(interval);
+        };
+    }, [newOrder]);
+
     // --- Automated Stock Deduction ---
     useEffect(() => {
-        const ordersToDeduct = orders.filter(o =>
-            (o.status === 'preparing' || o.status === 'ready' || o.status === 'paid') &&
+        const ordersToDeduct = orders.filter(o => 
+            (o.status === 'preparing' || o.status === 'ready' || o.status === 'paid') && 
             !deductedOrders.includes(o.id)
         );
 
@@ -295,18 +355,18 @@ const AdminPage = () => {
     const placeManualOrder = async (tableId, items) => {
         try {
             let orderToUpdate = null;
-
+            
             // Only merge for actual tables (not takeaway ID 0)
             if (tableId > 0) {
                 const { data } = await supabase
                     .from('orders')
                     .select('*')
+                    .eq('table_id', tableId)
                     .neq('status', 'paid')
                     .neq('status', 'rejected');
-
+                
                 if (data && data.length > 0) {
-                    const existing = data.find(o => o.table_id === tableId || (o.items && o.items.some(i => i.type === 'COMBINED' && i.tableId === tableId)));
-                    if (existing) orderToUpdate = existing;
+                    orderToUpdate = data[0]; // Take the first active order for this table
                 }
             }
 
@@ -320,7 +380,7 @@ const AdminPage = () => {
                     else updatedItems.push({ ...newItem, isNew: false, qty: newItem.qty });
                 });
                 const newTotal = orderToUpdate.total + items.reduce((acc, curr) => acc + (curr.price * curr.qty), 0);
-
+                
                 await supabase.from('orders').update({
                     items: updatedItems,
                     total: newTotal,
@@ -344,11 +404,11 @@ const AdminPage = () => {
 
                 await supabase.from('orders').insert(orderData);
             }
-
+            
             if (tableId > 0) {
                 await supabase.from('tables').update({ is_free: false }).eq('id', tableId);
             }
-
+            
             fetchInitialData();
             setShowManualOrder(null);
             setManualCart([]);
@@ -359,81 +419,75 @@ const AdminPage = () => {
         }
     };
 
-    const clearAllData = async () => {
-        const confirmClear = confirm("Are you sure you want to CLEAR ALL ORDERS and RESET TABLES for a new day?");
+    const startNewDay = () => {
+        const confirmClear = confirm("Are you sure you want to START A NEW DAY? This will reset the dashboard stats but KEEP all revenue data in history.");
         if (!confirmClear) return;
 
-        const saveBackup = confirm("Would you like to SAVE A BACKUP of today's orders to your computer first?");
-        if (saveBackup) {
-            const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(orders, null, 2));
-            const downloadAnchorNode = document.createElement('a');
-            downloadAnchorNode.setAttribute("href", dataStr);
-            downloadAnchorNode.setAttribute("download", `cafe_backup_${new Date().toISOString().split('T')[0]}.json`);
-            document.body.appendChild(downloadAnchorNode);
-            downloadAnchorNode.click();
-            downloadAnchorNode.remove();
-        }
-
         try {
-            // Clear orders - use .gt('id', 0) for numeric IDs
-            const { error: orderError } = await supabase.from('orders').delete().gt('id', 0);
-            if (orderError) throw orderError;
+            // Soft reset: Update the reset timestamp used by the dashboard
+            const now = new Date().toISOString();
+            localStorage.setItem('dash_last_reset', now);
 
-            // Reset Tables - use .gt('id', -1) for numeric IDs
-            const { error: tableError } = await supabase.from('tables').update({ is_free: true }).gt('id', -1);
-            if (tableError) throw tableError;
-
-            alert("Data cleared successfully! Ready for a new day.");
-            fetchInitialData();
+            // We still want to free tables for a fresh start
+            supabase.from('tables').update({ is_free: true }).gt('id', -1).then(() => {
+                alert("New day started! Tables have been reset and dashboard stats will show fresh data.");
+                fetchInitialData();
+            });
         } catch (err) {
-            alert("Error clearing data: " + err.message);
+            alert("Error starting new day: " + err.message);
         }
     };
 
-    const rejectOrder = async (orderId) => {
+    const rejectOrder = async (orderOrId) => {
         try {
-            const targetOrder = orders.find(o => o.id === orderId);
-            let targetTableId = targetOrder?.table_id;
+            const passedOrder = typeof orderOrId === 'object' && orderOrId !== null ? orderOrId : null;
+            const rawId = passedOrder ? passedOrder.id : orderOrId;
+            const normalizedOrderId =
+                typeof rawId === 'string' && rawId.trim() !== '' && !Number.isNaN(Number(rawId))
+                    ? Number(rawId)
+                    : rawId;
 
-            // Fallback: if local state doesn't have the order yet, fetch table_id from DB.
-            if (!targetTableId) {
-                const { data: orderRow, error: orderRowError } = await supabase
-                    .from('orders')
-                    .select('table_id')
-                    .eq('id', orderId)
-                    .maybeSingle();
+            // Try to find from local state, but fall back to passed order (from popup) if not yet in orders[]
+            const targetOrder =
+                orders.find(o => o.id === normalizedOrderId || o.id === rawId) || passedOrder;
 
-                if (orderRowError) throw orderRowError;
-                targetTableId = orderRow?.table_id;
-            }
-
-            const { error: orderError } = await supabase
+            // Mark as rejected (so customer sees the rejection), but treat it as non-active everywhere else
+            const { data: updatedOrder, error: updateError } = await supabase
                 .from('orders')
                 .update({ status: 'rejected' })
-                .eq('id', orderId);
+                .eq('id', normalizedOrderId)
+                .select()
+                .single();
 
-            if (orderError) throw orderError;
+            if (updateError) throw updateError;
 
-            // Free the table if it's a real table (not takeaway ID 0)
-            if (targetTableId && targetTableId > 0) {
-                const { error: tableError } = await supabase
+            // If this was a dine-in table, immediately free it up
+            const tableIdToFree = (updatedOrder && updatedOrder.table_id) ?? targetOrder?.table_id;
+            if (tableIdToFree && Number(tableIdToFree) > 0) {
+                const normalizedTableId =
+                    typeof tableIdToFree === 'string' && !Number.isNaN(Number(tableIdToFree))
+                        ? Number(tableIdToFree)
+                        : tableIdToFree;
+
+                await supabase
                     .from('tables')
                     .update({ is_free: true })
-                    .eq('id', targetTableId);
+                    .eq('id', normalizedTableId);
 
-                if (tableError) throw tableError;
+                setTables(prev =>
+                    prev.map(t =>
+                        t.id === normalizedTableId ? { ...t, is_free: true } : t
+                    )
+                );
 
-                // Update local state immediately so the floor view refreshes fast.
-                setTables(prev => prev.map(t =>
-                    t.id === targetTableId ? { ...t, is_free: true } : t
-                ));
-
-                // If the operator currently has this order open, close it.
-                if (selectedTableOrder?.id === orderId) setSelectedTableOrder(null);
+                if (selectedTableOrder && (selectedTableOrder.id === normalizedOrderId || selectedTableOrder.id === rawId)) {
+                    setSelectedTableOrder(null);
+                }
             }
 
+            // Update local state so UI immediately reflects dismissal and status
+            setOrders(prev => prev.map(o => (o.id === normalizedOrderId || o.id === rawId ? updatedOrder : o)));
             setNewOrder(null);
-            fetchOrders();
         } catch (err) {
             console.error('Error rejecting order:', err.message);
             alert('Failed to dismiss order: ' + err.message);
@@ -448,7 +502,7 @@ const AdminPage = () => {
             const clearedItems = targetOrder.items.map(i => ({ ...i, isNew: false }));
 
             setTables(prev => prev.map(t => t.id === tableId ? { ...t, is_free: false } : t));
-
+            
             if (selectedTableOrder && selectedTableOrder.id === orderId) {
                 setSelectedTableOrder(prev => ({ ...prev, status: 'preparing', items: clearedItems }));
             }
@@ -457,7 +511,7 @@ const AdminPage = () => {
 
             const { data: updatedOrder, error: orderError } = await supabase
                 .from('orders')
-                .update({
+                .update({ 
                     status: 'preparing',
                     items: clearedItems
                 })
@@ -480,18 +534,23 @@ const AdminPage = () => {
         }
     };
 
-    const handleUpdateItemQty = async (orderId, itemName, delta, isParcel) => {
+    const handleUpdateItemQty = async (orderId, itemName, delta, isParcelFlag = null) => {
         try {
             const order = orders.find(o => o.id === orderId);
             if (!order) return;
 
             let newItems = [...order.items];
-            const itemIdx = newItems.findIndex(i => i.name === itemName && !!i.isParcel === !!isParcel && i.type !== 'METADATA');
-
+            const itemIdx = newItems.findIndex(
+                i =>
+                    i.name === itemName &&
+                    !!i.isParcel === !!isParcelFlag &&
+                    i.type !== 'METADATA'
+            );
+            
             if (itemIdx === -1) return;
 
             const updatedQty = newItems[itemIdx].qty + delta;
-
+            
             if (updatedQty <= 0) {
                 // Remove item
                 newItems.splice(itemIdx, 1);
@@ -515,6 +574,9 @@ const AdminPage = () => {
             if (error) throw error;
 
             setOrders(prev => prev.map(o => o.id === orderId ? updatedOrder : o));
+            if (newOrder && newOrder.id === orderId) {
+                setNewOrder(updatedOrder); // Keep popup UI in sync
+            }
             if (selectedTableOrder && selectedTableOrder.id === orderId) {
                 setSelectedTableOrder(updatedOrder);
             }
@@ -523,94 +585,92 @@ const AdminPage = () => {
         }
     };
 
-    const markTableFree = async (tableId, paymentMethod = null) => {
+    const markTableFree = async (rawTableId, paymentMethod = null, splitInfo = null) => {
+        const tableId = Number(rawTableId);
+        if (!tableId) return;
         try {
-            // Save/Update Customer Info if provided
-            if (payPhone && payName) {
-                const { error: custError } = await supabase
-                    .from('customers')
-                    .upsert({
-                        name: payName,
-                        phone_number: payPhone
-                    }, { onConflict: 'phone_number' });
+            // Find active order for this table
+            const activeOrder = orders.find(o => Number(o.table_id) === tableId && o.status !== 'paid' && o.status !== 'rejected');
+            
+            if (activeOrder) {
+                const updates = { status: 'paid' };
 
-                if (custError) console.error('Error saving customer during payment:', custError);
+                // Handle PAYMENT_METADATA for breakdown
+                let newItems = [...(activeOrder.items || [])];
+                const metaIdx = newItems.findIndex(i => i.type === 'PAYMENT_METADATA');
+                
+                const metaPayload = { 
+                    type: 'PAYMENT_METADATA', 
+                    method: paymentMethod || 'Cash',
+                    split: paymentMethod === 'Split' ? splitInfo : null 
+                };
 
-                // Clear state
-                setPayPhone('');
-                setPayName('');
-                setPayExists(false);
+                if (metaIdx > -1) newItems[metaIdx] = metaPayload;
+                else newItems.push(metaPayload);
+                updates.items = newItems;
+
+                const { error: updateError } = await supabase.from('orders').update(updates).eq('id', activeOrder.id);
+                if (updateError) throw updateError;
             }
 
-            const targetOrder = orders.find(o => o.table_id === tableId && o.status !== 'paid' && o.status !== 'rejected');
-            let tableIdsToUpdate = [tableId];
-            if (targetOrder && targetOrder.items) {
-                targetOrder.items.forEach(i => {
-                    if (i.type === 'COMBINED' && i.tableId) tableIdsToUpdate.push(i.tableId);
-                });
-            }
-
-            const { error: tableError } = await supabase.from('tables').update({ is_free: true }).in('id', tableIdsToUpdate);
+            // Free the primary table
+            const { error: tableError } = await supabase.from('tables').update({ is_free: true }).eq('id', tableId);
             if (tableError) throw tableError;
 
-            const updates = { status: 'paid' };
-            if (paymentMethod) updates.payment_method = paymentMethod;
-
-            const { error: orderError } = await supabase.from('orders')
-                .update(updates)
-                .eq('table_id', tableId)
-                .neq('status', 'paid');
-
-            if (orderError) {
-                // If column is missing, use the items array as a fallback
-                if (orderError.message.includes('payment_method')) {
-                    const { data: orderToFix } = await supabase.from('orders').select('items').eq('table_id', tableId).neq('status', 'paid').maybeSingle();
-                    if (orderToFix) {
-                        const fixedItems = [...orderToFix.items, { type: 'PAYMENT_METADATA', method: paymentMethod || 'Cash' }];
-                        await supabase.from('orders').update({
-                            status: 'paid',
-                            items: fixedItems
-                        }).eq('table_id', tableId).neq('status', 'paid');
-                    }
-                } else {
-                    throw orderError;
-                }
+            // Free any linked tables
+            const linkedOrders = orders.filter(o => o.items?.length === 1 && o.items[0].type === 'LINK' && Number(o.items[0].targetTable) === tableId);
+            for (const linked of linkedOrders) {
+                await supabase.from('tables').update({ is_free: true }).eq('id', linked.table_id);
+                await supabase.from('orders').update({ status: 'paid' }).eq('id', linked.id);
             }
 
-            setTables(prev => prev.map(t => tableIdsToUpdate.includes(t.id) ? { ...t, is_free: true } : t));
-            setOrders(prev => prev.filter(o => o.table_id !== tableId || o.status === 'paid'));
+            // Save/Update Customer Info if provided
+            if (payPhone && payName) {
+                await supabase.from('customers').upsert({ name: payName, phone_number: payPhone }, { onConflict: 'phone_number' });
+                setPayPhone(''); setPayName(''); setPayExists(false);
+            }
+
+            // Local state updates
+            setTables(prev => prev.map(t => Number(t.id) === tableId || linkedOrders.some(lo => Number(lo.table_id) === Number(t.id)) ? { ...t, is_free: true } : t));
+            setOrders(prev => prev.filter(o => (Number(o.table_id) !== tableId && !linkedOrders.some(lo => lo.id === o.id)) || o.status === 'paid'));
 
             setSelectedTableOrder(null);
+            setIsSplitPayment(false);
             fetchInitialData();
         } catch (err) {
             console.error('Error clearing table:', err.message);
-            alert('Failed to clear table: ' + err.message);
+            alert('Payment failed: ' + err.message);
         }
     };
 
-    const completeTakeaway = async (orderId, paymentMethod = 'Cash') => {
+    const completeTakeaway = async (orderId, paymentMethod, splitInfo = null) => {
         try {
             const updates = { status: 'paid' };
-            // Store payment method inside items if column not available
-            const targetOrder = orders.find(o => o.id === orderId);
-            if (targetOrder) {
-                const existingMeta = targetOrder.items.find(i => i.type === 'PAYMENT_METADATA');
-                let newItems = [...targetOrder.items];
-                if (existingMeta) {
-                    newItems = newItems.map(i => i.type === 'PAYMENT_METADATA' ? { ...i, method: paymentMethod } : i);
-                } else {
-                    newItems.push({ type: 'PAYMENT_METADATA', method: paymentMethod });
-                }
+
+            // Handle metadata for breakdown
+            const { data: orderToFix } = await supabase.from('orders').select('items').eq('id', orderId).maybeSingle();
+            if (orderToFix) {
+                let newItems = [...(orderToFix.items || [])];
+                const metaIdx = newItems.findIndex(i => i.type === 'PAYMENT_METADATA');
+                const metaPayload = { 
+                    type: 'PAYMENT_METADATA', 
+                    method: paymentMethod,
+                    split: paymentMethod === 'Split' ? splitInfo : null
+                };
+                if (metaIdx > -1) newItems[metaIdx] = metaPayload;
+                else newItems.push(metaPayload);
                 updates.items = newItems;
             }
 
             const { error } = await supabase.from('orders')
                 .update(updates)
                 .eq('id', orderId);
-
+            
             if (error) throw error;
+
             setOrders(prev => prev.filter(o => o.id !== orderId));
-            setParcelHandoverId(null);
+            alert('Parcel Handed Over Successfully!');
+            fetchInitialData();
         } catch (err) {
             console.error('Error completing takeaway:', err.message);
             alert('Failed to complete takeaway: ' + err.message);
@@ -624,7 +684,7 @@ const AdminPage = () => {
 
             const existingMeta = order.items.find(i => i.type === 'PAYMENT_METADATA');
             let newItems = [...order.items];
-
+            
             if (existingMeta) {
                 newItems = newItems.map(i => i.type === 'PAYMENT_METADATA' ? { ...i, method } : i);
             } else {
@@ -643,99 +703,190 @@ const AdminPage = () => {
         }
     };
 
-    const handleTableClick = (table) => {
-        const tableOrder = orders.find(o =>
-            o.status !== 'paid' && o.status !== 'rejected' &&
-            (o.table_id === table.id || (o.items && o.items.some(i => i.type === 'COMBINED' && i.tableId === table.id)))
-        );
-        if (tableOrder) {
-            setSelectedTableOrder(tableOrder);
-        }
-    };
+    const transferOrderToTable = async (orderId, fromTableId, toTableId) => {
+        if (!toTableId || toTableId === fromTableId) return;
 
-    const handleTransferTable = async () => {
-        if (!selectedTableOrder || !tableActionTarget) return;
-        const targetId = parseInt(tableActionTarget);
         try {
-            await supabase.from('orders').update({ table_id: targetId }).eq('id', selectedTableOrder.id);
-            await supabase.from('tables').update({ is_free: false }).eq('id', targetId);
-            await supabase.from('tables').update({ is_free: true }).eq('id', selectedTableOrder.table_id);
-            
-            setShowTransferModal(false);
-            setTableActionTarget('');
-            setSelectedTableOrder(null);
-            fetchInitialData();
-            alert(`Order transferred to Table ${targetId} successfully!`);
-        } catch (err) {
-            alert('Failed to transfer: ' + err.message);
-        }
-    };
-
-    const handleCombineTable = async () => {
-        if (!selectedTableOrder || !tableActionTarget) return;
-        const targetId = parseInt(tableActionTarget);
-        try {
-            const targetTableArr = tables.find(t => t.id === targetId);
-            const { data: targetOrders } = await supabase
+            const { data: existingTarget, error: targetError } = await supabase
                 .from('orders')
                 .select('*')
-                .eq('table_id', targetId)
+                .eq('table_id', toTableId)
+                .neq('status', 'paid')
+                .neq('status', 'rejected')
+                .maybeSingle();
+
+            if (targetError && targetError.code !== 'PGRST116') throw targetError;
+            if (existingTarget) {
+                alert('Target table already has an active order. Use "Combine Tables" instead.');
+                return;
+            }
+
+            const { data: updatedOrder, error: orderError } = await supabase
+                .from('orders')
+                .update({ table_id: toTableId })
+                .eq('id', orderId)
+                .select()
+                .single();
+
+            if (orderError) throw orderError;
+
+            await supabase.from('tables').update({ is_free: true }).eq('id', fromTableId);
+            await supabase.from('tables').update({ is_free: false }).eq('id', toTableId);
+
+            setTables(prev =>
+                prev.map(t =>
+                    t.id === fromTableId
+                        ? { ...t, is_free: true }
+                        : t.id === toTableId
+                        ? { ...t, is_free: false }
+                        : t
+                )
+            );
+
+            setOrders(prev => prev.map(o => (o.id === orderId ? updatedOrder : o)));
+            if (selectedTableOrder && selectedTableOrder.id === orderId) {
+                setSelectedTableOrder(updatedOrder);
+            }
+        } catch (err) {
+            console.error('Error transferring table:', err.message);
+            alert('Failed to transfer table: ' + err.message);
+        }
+    };
+
+    const combineTableWith = async (primaryTableId, secondaryTableId) => {
+        if (!secondaryTableId || secondaryTableId === primaryTableId) return;
+
+        try {
+            const { data: primaryOrders, error: primaryError } = await supabase
+                .from('orders')
+                .select('*')
+                .eq('table_id', primaryTableId)
                 .neq('status', 'paid')
                 .neq('status', 'rejected');
 
-            let updatedItems = [...selectedTableOrder.items];
-            let additionalTotal = 0;
+            if (primaryError) throw primaryError;
 
-            if (targetOrders && targetOrders.length > 0) {
-                const targetOrder = targetOrders[0];
-                targetOrder.items.forEach(newItem => {
-                    if (newItem.type === 'METADATA' || newItem.type === 'PAYMENT_METADATA' || newItem.type === 'COMBINED') return;
-                    const idx = updatedItems.findIndex(i => i.id === newItem.id && !!i.isParcel === !!newItem.isParcel);
+            const { data: secondaryOrders, error: secondaryError } = await supabase
+                .from('orders')
+                .select('*')
+                .eq('table_id', secondaryTableId)
+                .neq('status', 'paid')
+                .neq('status', 'rejected');
+
+            if (secondaryError) throw secondaryError;
+
+            if (!primaryOrders || primaryOrders.length === 0) {
+                alert('Primary table must have an active order to combine into.');
+                return;
+            }
+
+            const keepOrder = primaryOrders[0];
+            const mergeOrder = secondaryOrders && secondaryOrders.length > 0 ? secondaryOrders[0] : null;
+
+            let mergedItems = [...keepOrder.items];
+            if (mergeOrder) {
+                mergeOrder.items.forEach(item => {
+                    if (item.type === 'METADATA' || item.type === 'PAYMENT_METADATA' || item.type === 'LINK') return;
+                    const idx = mergedItems.findIndex(
+                        i =>
+                            i.id === item.id &&
+                            !!i.isParcel === !!item.isParcel &&
+                            i.type !== 'METADATA' &&
+                            i.type !== 'PAYMENT_METADATA' &&
+                            i.type !== 'LINK'
+                    );
                     if (idx > -1) {
-                        updatedItems[idx].qty += (newItem.qty || 1);
+                        mergedItems[idx] = {
+                            ...mergedItems[idx],
+                            qty: (mergedItems[idx].qty || 0) + (item.qty || 0),
+                        };
                     } else {
-                        updatedItems.push({ ...newItem, isNew: false });
+                        mergedItems.push(item);
                     }
                 });
-                additionalTotal = targetOrder.total || 0;
-                await supabase.from('orders').update({ status: 'rejected' }).eq('id', targetOrder.id);
             }
 
-            if (!updatedItems.some(i => i.type === 'COMBINED' && i.tableId === targetId)) {
-                updatedItems.push({ type: 'COMBINED', tableId: targetId });
+            const mergedTotal = mergedItems
+                .filter(i => i.type !== 'METADATA' && i.type !== 'PAYMENT_METADATA' && i.type !== 'LINK')
+                .reduce((acc, curr) => acc + (curr.price * curr.qty), 0);
+
+            const { data: updatedKeep, error: updateError } = await supabase
+                .from('orders')
+                .update({ items: mergedItems, total: mergedTotal })
+                .eq('id', keepOrder.id)
+                .select()
+                .single();
+
+            if (updateError) throw updateError;
+
+            if (mergeOrder) {
+                const { error: updateLinkError } = await supabase
+                    .from('orders')
+                    .update({ items: [{ type: 'LINK', targetTable: primaryTableId }], total: 0 })
+                    .eq('id', mergeOrder.id);
+                if (updateLinkError) throw updateLinkError;
+            } else {
+                const { error: insertLinkError } = await supabase
+                    .from('orders')
+                    .insert({ 
+                        table_id: secondaryTableId, 
+                        items: [{ type: 'LINK', targetTable: primaryTableId }], 
+                        total: 0, 
+                        status: 'preparing' 
+                    });
+                if (insertLinkError) throw insertLinkError;
             }
 
-            const newTotal = selectedTableOrder.total + additionalTotal;
-            await supabase.from('orders').update({ items: updatedItems, total: newTotal }).eq('id', selectedTableOrder.id);
+            await supabase.from('tables').update({ is_free: false }).eq('id', secondaryTableId);
+            await supabase.from('tables').update({ is_free: false }).eq('id', primaryTableId);
 
-            if (targetTableArr?.is_free) {
-                await supabase.from('tables').update({ is_free: false }).eq('id', targetId);
+            setTables(prev =>
+                prev.map(t =>
+                    (t.id === secondaryTableId || t.id === primaryTableId)
+                        ? { ...t, is_free: false }
+                        : t
+                )
+            );
+
+            fetchOrders(); // Refresh to get the LINK order
+
+            if (selectedTableOrder && selectedTableOrder.table_id === primaryTableId) {
+                setSelectedTableOrder(updatedKeep);
             }
-
-            setShowCombineModal(false);
-            setTableActionTarget('');
-            setSelectedTableOrder(null);
-            fetchInitialData();
-            alert(`Table ${targetId} successfully combined into Table ${selectedTableOrder.table_id}!`);
         } catch (err) {
-            alert('Failed to combine: ' + err.message);
+            console.error('Error combining tables:', err.message);
+            alert('Failed to combine tables: ' + err.message);
+        }
+    };
+
+    const handleTableClick = (table) => {
+        const tableOrder = orders.find(
+            o => o.table_id === table.id && o.status !== 'paid' && o.status !== 'rejected'
+        );
+        if (tableOrder) {
+            setSelectedTableOrder(tableOrder);
+            setEditTotal(tableOrder.total || 0);
+            setIsSplitPayment(false);
+            setSplitCashAmount(0);
+            setSplitOnlineAmount(0);
+            setPayPhone('');
+            setPayName('');
+            setPayExists(false);
         }
     };
 
     const getStats = () => {
         const occupiedTableIds = new Set(
-            orders
-                .filter(o => o.status !== 'paid' && o.status !== 'rejected')
-                .map(o => o.table_id)
+            orders.filter(o => o.status !== 'paid' && o.status !== 'rejected').map(o => o.table_id)
         );
         const occupied = occupiedTableIds.size;
         const free = tables.length - occupied;
-        const activeOrders = orders.filter(o => o.status !== 'paid' && o.status !== 'rejected').length;
+        const activeOrders = orders.length;
 
         // Revenue Breakdown
         const paidOrders = orders.filter(o => o.status === 'paid');
         const revenue = paidOrders.reduce((acc, curr) => acc + curr.total, 0);
-
+        
         const cashRevenue = paidOrders.reduce((acc, curr) => {
             const payMeta = curr.items.find(i => i.type === 'PAYMENT_METADATA');
             const method = curr.payment_method || payMeta?.method || 'Cash';
@@ -755,77 +906,191 @@ const AdminPage = () => {
 
     return (
         <>
-            <div className="admin-container animate-fade" style={{ minHeight: '100vh', paddingBottom: '40px' }}>
+            <div className={`ldb-root admin-container`} style={{ minHeight: '100vh', background: 'var(--bg-dark)' }}>
                 <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '32px', gap: '16px', flexWrap: 'wrap' }}>
                     <div>
-                        <h1 style={{ fontSize: 'clamp(1.4rem, 5vw, 2.2rem)', color: 'var(--text-main)', fontWeight: '800', letterSpacing: '-0.04em', lineHeight: 1.1 }}>fooodweb ADMIN</h1>
+                        <h1 style={{ fontSize: 'clamp(1.4rem, 5vw, 2.2rem)', color: 'var(--text-main)', fontWeight: '800', letterSpacing: '-0.04em', lineHeight: 1.1 }}>FooodWeb ADMIN</h1>
                         <p style={{ color: 'var(--text-muted)', fontSize: '0.88rem', fontWeight: '500', marginTop: '4px' }}>Dashboard & Operations</p>
                     </div>
-                    <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
-                        <button
-                            onClick={() => setActiveTab('customize')}
-                            style={{
-                                padding: '10px 16px',
-                                borderRadius: '14px',
-                                backgroundColor: activeTab === 'customize' ? 'var(--accent-white)' : 'var(--glass)',
-                                color: activeTab === 'customize' ? 'var(--bg-dark)' : 'var(--text-main)',
-                                border: '1px solid var(--border-subtle)',
-                                fontSize: '0.85rem',
-                                fontWeight: '700',
-                                transition: 'all 0.3s'
-                            }}
-                        >
-                            ⚙️ Customize
-                        </button>
-                        <button
-                            onClick={clearAllData}
-                            style={{
-                                padding: '10px 16px',
-                                borderRadius: '14px',
-                                backgroundColor: 'rgba(239, 68, 68, 0.15)',
-                                color: '#f87171',
-                                border: '1px solid rgba(239, 68, 68, 0.3)',
-                                fontSize: '0.85rem',
-                                fontWeight: '700',
-                                transition: 'all 0.3s'
-                            }}
-                        >
-                            🧹 Clear Data
-                        </button>
-                        <div className="glass" style={{ padding: '10px 16px', borderRadius: '14px', fontWeight: '600', color: 'var(--text-main)', fontSize: '0.85rem' }}>
-                            🔔 <span style={{ marginLeft: '6px' }}>{newOrder ? '1 New' : '0'}</span>
+                    <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }} className="header-actions">
+                        {/* Desktop View Buttons */}
+                        <div className="desktop-only" style={{ display: 'flex', gap: '10px' }}>
+                            <button
+                                onClick={() => window.location.href = '/dashboard'}
+                                style={{
+                                    padding: '10px 16px',
+                                    borderRadius: '14px',
+                                    background: 'linear-gradient(135deg, rgba(245,166,35,0.2), rgba(0,201,167,0.2))',
+                                    color: '#F5A623',
+                                    border: '1px solid rgba(245,166,35,0.4)',
+                                    fontSize: '0.85rem',
+                                    fontWeight: '700',
+                                    transition: 'all 0.3s',
+                                    cursor: 'pointer',
+                                }}
+                            >
+                                📊 Dashboard
+                            </button>
+                            <button
+                                onClick={() => setActiveTab('customize')}
+                                style={{
+                                    padding: '10px 16px',
+                                    borderRadius: '14px',
+                                    backgroundColor: activeTab === 'customize' ? 'var(--accent-white)' : 'var(--glass)',
+                                    color: activeTab === 'customize' ? 'var(--bg-dark)' : 'var(--text-main)',
+                                    border: '1px solid var(--border-subtle)',
+                                    fontSize: '0.85rem',
+                                    fontWeight: '700',
+                                    transition: 'all 0.3s'
+                                }}
+                            >
+                                ⚙️ Customize
+                            </button>
+                            <button
+                                onClick={startNewDay}
+                                style={{
+                                    padding: '10px 16px',
+                                    borderRadius: '14px',
+                                    backgroundColor: 'rgba(0, 201, 167, 0.15)',
+                                    color: '#00C9A7',
+                                    border: '1px solid rgba(0, 201, 167, 0.3)',
+                                    fontSize: '0.85rem',
+                                    fontWeight: '700',
+                                    transition: 'all 0.3s'
+                                }}
+                            >
+                                ✨ New Day
+                            </button>
                         </div>
-                        <button
-                            onClick={() => supabase.auth.signOut()}
-                            style={{
-                                padding: '10px 16px',
-                                borderRadius: '14px',
-                                backgroundColor: 'var(--glass)',
-                                color: 'var(--text-main)',
-                                border: '1px solid var(--border-subtle)',
-                                fontSize: '0.85rem',
-                                fontWeight: '700',
+
+                        {/* Mobile View Settings Button */}
+                        <div className="mobile-only" style={{ position: 'relative' }}>
+                            <button
+                                onClick={() => setShowSettingsMenu(!showSettingsMenu)}
+                                style={{
+                                    padding: '10px 16px',
+                                    borderRadius: '14px',
+                                    backgroundColor: 'var(--glass)',
+                                    color: 'var(--text-main)',
+                                    border: '1px solid var(--border-subtle)',
+                                    fontSize: '0.85rem',
+                                    fontWeight: '700',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '8px'
+                                }}
+                            >
+                                ⚙️ Settings
+                            </button>
+                            {showSettingsMenu && (
+                                <div className="glass animate-fade" style={{
+                                    position: 'absolute',
+                                    top: 'calc(100% + 8px)',
+                                    left: 0,
+                                    width: '200px',
+                                    borderRadius: '16px',
+                                    padding: '8px',
+                                    zIndex: 100,
+                                    boxShadow: '0 10px 30px rgba(0,0,0,0.5)',
+                                    border: '1px solid var(--border-subtle)'
+                                }}>
+                                    {[
+                                        { label: '📊 Dashboard', onClick: () => window.location.href = '/dashboard' },
+                                        { label: '⚙️ Customize', onClick: () => setActiveTab('customize') },
+                                        { label: '✨ Start New Day', onClick: startNewDay, color: '#00C9A7' },
+                                        { label: '🚪 Sign Out', onClick: () => supabase.auth.signOut() }
+                                    ].map((item, idx) => (
+                                        <button
+                                            key={idx}
+                                            onClick={() => { item.onClick(); setShowSettingsMenu(false); }}
+                                            style={{
+                                                width: '100%',
+                                                textAlign: 'left',
+                                                padding: '12px 16px',
+                                                borderRadius: '10px',
+                                                backgroundColor: 'transparent',
+                                                color: item.color || 'var(--text-main)',
+                                                border: 'none',
+                                                fontSize: '0.9rem',
+                                                fontWeight: '600',
+                                                cursor: 'pointer'
+                                            }}
+                                        >
+                                            {item.label}
+                                        </button>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+
+                        <div 
+                            onClick={() => {
+                                playOrderBeep();
                             }}
+                            className="glass" 
+                            style={{ padding: '10px 16px', borderRadius: '14px', fontWeight: '600', color: 'var(--text-main)', fontSize: '0.85rem', cursor: 'pointer' }}
                         >
-                            Sign Out
-                        </button>
+                            🔔 <span style={{ marginLeft: '6px' }}>{newOrder ? '1 New' : orders.filter(o => o.status === 'new').length}</span>
+                        </div>
+                        
+                        <div className="desktop-only">
+                            <button
+                                onClick={() => supabase.auth.signOut()}
+                                style={{
+                                    padding: '10px 16px',
+                                    borderRadius: '14px',
+                                    backgroundColor: 'var(--glass)',
+                                    color: 'var(--text-main)',
+                                    border: '1px solid var(--border-subtle)',
+                                    fontSize: '0.85rem',
+                                    fontWeight: '700',
+                                }}
+                            >
+                                Sign Out
+                            </button>
+                        </div>
                     </div>
                 </header>
 
                 {/* Stats Bar */}
+                <style>
+                    {`
+                        @media (max-width: 768px) {
+                            .desktop-only { display: none !important; }
+                            .mobile-only { display: block !important; }
+                            .header-actions { width: auto; gap: 6px !important; }
+                            .stats-grid { 
+                                grid-template-columns: repeat(2, 1fr) !important; 
+                                gap: 10px !important;
+                                margin-bottom: 20px !important;
+                            }
+                            .admin-container { padding: 16px 12px !important; }
+                            .table-grid { grid-template-columns: 1fr !important; }
+                            .modal-content { 
+                                width: 95% !important; 
+                                padding: 20px !important; 
+                                max-height: 90vh !important;
+                                overflow-y: auto !important;
+                            }
+                        }
+                        @media (min-width: 769px) {
+                            .mobile-only { display: none !important; }
+                        }
+                    `}
+                </style>
                 <div style={{
                     display: 'grid',
-                    gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))',
+                    gridTemplateColumns: 'repeat(auto-fit, minmax(110px, 1fr))',
                     gap: '12px',
                     marginBottom: '28px'
-                }}>
+                }} className="stats-grid">
                     {[
-                        { label: 'Occupied', val: stats.occupied, icon: '🪑', c: 'var(--text-main)' },
-                        { label: 'Free', val: stats.free, icon: '✅', c: 'var(--accent-green)' },
-                        { label: 'Orders', val: stats.activeOrders, icon: '📋', c: 'var(--accent-purple)' },
-                        { label: 'Total Rev', val: `₹${stats.revenue}`, icon: '💰', c: 'var(--text-main)' },
-                        { label: 'Cash', val: `₹${stats.cashRevenue}`, icon: '💵', c: '#fbbf24' },
-                        { label: 'Online', val: `₹${stats.onlineRevenue}`, icon: '💳', c: '#60a5fa' }
+                        { label: 'Occupied',  val: stats.occupied,      icon: '🪑', c: 'var(--text-main)' },
+                        { label: 'Free',       val: stats.free,          icon: '✅', c: 'var(--accent-green)' },
+                        { label: 'Orders',     val: stats.activeOrders,  icon: '📋', c: 'var(--accent-purple)' },
+                        { label: 'Total Rev',  val: `₹${stats.revenue}`, icon: '💰', c: 'var(--text-main)' },
+                        { label: 'Cash',       val: `₹${stats.cashRevenue}`, icon: '💵', c: '#fbbf24' },
+                        { label: 'Online',     val: `₹${stats.onlineRevenue}`, icon: '💳', c: '#60a5fa' }
                     ].map((s, i) => (
                         <div key={i} className="glass" style={{ padding: '16px 12px', borderRadius: '18px', textAlign: 'center' }}>
                             <p style={{ fontSize: '1.2rem', marginBottom: '4px' }}>{s.icon}</p>
@@ -838,9 +1103,9 @@ const AdminPage = () => {
                 {/* Tabs */}
                 <div style={{ display: 'flex', gap: '6px', marginBottom: '24px', background: 'var(--glass)', padding: '5px', borderRadius: '18px', overflowX: 'auto', flexWrap: 'nowrap' }}>
                     {[
-                        { id: 'floor', label: '🪑 Floor' },
-                        { id: 'queue', label: '📋 Queue' },
-                        { id: 'takeaway', label: '📦 Parcel' },
+                        { id: 'floor',     label: '🪑 Floor' },
+                        { id: 'queue',     label: '📋 Queue' },
+                        { id: 'takeaway',  label: '📦 Parcel' },
                         { id: 'inventory', label: '🏷️ Inventory' },
                         { id: 'categories', label: '📂 Categories' },
                         { id: 'customers', label: '👥 Customers' },
@@ -880,7 +1145,7 @@ const AdminPage = () => {
                                 const formData = new FormData(e.target);
                                 const imageFile = formData.get('image');
                                 let image_url = null;
-
+                                
                                 if (imageFile && imageFile.size > 0) {
                                     image_url = await handleImageUpload(imageFile);
                                 }
@@ -905,8 +1170,8 @@ const AdminPage = () => {
                                 <div style={{ display: 'flex', gap: '12px' }}>
                                     <input name="price" type="number" placeholder="Price (₹)" required className="glass" style={{ flex: 1, padding: '16px', borderRadius: '16px', color: 'var(--text-main)', outline: 'none' }} />
                                     <select name="category" required className="glass" style={{ flex: 1, padding: '16px', borderRadius: '16px', color: 'var(--text-main)', outline: 'none', appearance: 'none' }}>
-                                        <option value="">Select Category</option>
-                                        {categories.map(cat => <option key={cat.id} value={cat.name}>{cat.name}</option>)}
+                                        <option value="" style={{ color: 'var(--bg-dark)' }}>Select Category</option>
+                                        {categories.map(cat => <option key={cat.id} value={cat.name} style={{ color: 'var(--bg-dark)' }}>{cat.name}</option>)}
                                     </select>
                                 </div>
                                 <textarea name="description" placeholder="Description" className="glass" style={{ padding: '16px', borderRadius: '16px', color: 'var(--text-main)', minHeight: '80px', outline: 'none', resize: 'none' }}></textarea>
@@ -919,9 +1184,9 @@ const AdminPage = () => {
                                 </button>
                             </form>
 
-                            <input
-                                type="text"
-                                placeholder="🔍 Search menu items..."
+                            <input 
+                                type="text" 
+                                placeholder="🔍 Search menu items..." 
                                 value={menuSearch}
                                 onChange={(e) => setMenuSearch(e.target.value)}
                                 className="glass"
@@ -945,7 +1210,7 @@ const AdminPage = () => {
                                             </span>
                                         </div>
                                         <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                                            <button
+                                            <button 
                                                 onClick={async () => {
                                                     await supabase.from('menu_items').update({ is_available: item.is_available === false ? true : false }).eq('id', item.id);
                                                     fetchMenuItems();
@@ -998,7 +1263,7 @@ const AdminPage = () => {
                                 <button type="submit" style={{ padding: '16px', backgroundColor: 'var(--accent-white)', color: 'var(--bg-dark)', fontWeight: '700', borderRadius: '16px', letterSpacing: '-0.01em' }}>Add Table</button>
                             </form>
 
-                            <div style={{ maxHeight: '400px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '12px', paddingRight: '8px' }}>
+                             <div style={{ maxHeight: '400px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '12px', paddingRight: '8px' }}>
                                 {tables.map(table => (
                                     <div key={table.id} className="glass" style={{ padding: '16px', borderRadius: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.95rem' }}>
                                         <span style={{ fontWeight: '500', color: 'var(--text-main)' }}>Table {table.id} <span style={{ color: 'var(--text-muted)' }}>({table.seats} Seats)</span></span>
@@ -1068,7 +1333,7 @@ const AdminPage = () => {
                             const formData = new FormData(e.target);
                             const imageFile = formData.get('image');
                             let image_url = null;
-
+                            
                             if (imageFile && imageFile.size > 0) {
                                 image_url = await handleImageUpload(imageFile);
                             }
@@ -1131,13 +1396,13 @@ const AdminPage = () => {
                         <div className="glass" style={{ padding: '32px', borderRadius: '24px' }}>
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
                                 <h1 style={{ fontSize: '1.6rem', fontWeight: '800' }}>Customer Directory</h1>
-                                <input
-                                    type="text"
-                                    placeholder="🔍 Search by name or phone..."
+                                <input 
+                                    type="text" 
+                                    placeholder="🔍 Search by name or phone..." 
                                     className="glass"
                                     value={customerSearch}
                                     onChange={(e) => setCustomerSearch(e.target.value)}
-                                    style={{ padding: '12px 20px', borderRadius: '16px', color: 'white', width: '300px', outline: 'none' }}
+                                    style={{ padding: '12px 20px', borderRadius: '16px', color: 'var(--text-main)', width: '300px', outline: 'none' }}
                                 />
                             </div>
                             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '16px' }}>
@@ -1152,7 +1417,7 @@ const AdminPage = () => {
                                                 <h3 style={{ fontSize: '1.1rem', fontWeight: '700', marginBottom: '2px' }}>{customer.name}</h3>
                                                 <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>📞 {customer.phone_number}</p>
                                             </div>
-                                            <button
+                                            <button 
                                                 onClick={async () => {
                                                     if (confirm(`Delete contact for ${customer.name}?`)) {
                                                         await supabase.from('customers').delete().eq('id', customer.id);
@@ -1172,34 +1437,43 @@ const AdminPage = () => {
                         </div>
                     </div>
                 ) : activeTab === 'inventory' ? (
-                    <InventoryManager
+                    <InventoryManager 
                         materials={materials} setMaterials={setMaterials}
                         recipes={invRecipes} setRecipes={setInvRecipes}
                         consumeLog={consumeLog} setConsumeLog={setConsumeLog}
                         restockLog={restockLog} setRestockLog={setRestockLog}
                         menuItems={menuItems}
                     />
-                ) : activeTab === 'floor' ? (
+                 ) : activeTab === 'floor' ? (
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: '16px' }}>
                         {tables.map(table => {
-                            const tableOrder = orders.find(o =>
-                                o.table_id === table.id && o.status !== 'paid' && o.status !== 'rejected'
+                            const tableOrder = orders.find(
+                                o => o.table_id === table.id && o.status !== 'paid' && o.status !== 'rejected'
                             );
-                            const isOccupied = (tableOrder && tableOrder.status !== 'new') || !table.is_free;
                             const hasNewOrder = tableOrder?.status === 'new';
+                            const isLinked = tableOrder?.items?.length === 1 && tableOrder.items[0].type === 'LINK';
+                            const isOccupied = (!hasNewOrder && tableOrder) || (!table.is_free && !hasNewOrder);
 
                             return (
                                 <div
                                     key={table.id}
-                                    onClick={() => handleTableClick(table)}
+                                    onClick={() => {
+                                        if (isLinked) {
+                                            const targetId = tableOrder.items[0].targetTable;
+                                            const targetOrder = orders.find(o => o.table_id === targetId && o.status !== 'paid' && o.status !== 'rejected');
+                                            if (targetOrder) setSelectedTableOrder(targetOrder);
+                                        } else {
+                                            handleTableClick(table);
+                                        }
+                                    }}
                                     className="glass"
                                     style={{
                                         padding: '32px 24px',
                                         borderRadius: '24px',
-                                        border: isOccupied ? '1px solid var(--text-main)' : (hasNewOrder ? '1px solid var(--text-muted)' : '1px solid var(--border-subtle)'),
-                                        backgroundColor: isOccupied ? 'var(--accent-white)' : (hasNewOrder ? 'var(--glass-hover)' : 'var(--glass)'),
-                                        color: isOccupied ? 'var(--bg-dark)' : 'var(--text-main)',
-                                        cursor: (isOccupied || hasNewOrder) ? 'pointer' : 'default',
+                                        border: isLinked ? '1px dashed rgba(255,255,255,0.2)' : isOccupied ? '1px solid rgba(255,159,67,0.3)' : (hasNewOrder ? '1px solid rgba(0,201,167,0.4)' : '1px solid rgba(255,255,255,0.08)'),
+                                        backgroundColor: isLinked ? 'rgba(255,255,255,0.03)' : isOccupied ? 'rgba(255,159,67,0.1)' : (hasNewOrder ? 'rgba(0,201,167,0.1)' : 'rgba(255,255,255,0.02)'),
+                                        color: isOccupied && !isLinked ? '#ff9f43' : (hasNewOrder ? '#00c9a7' : '#fff'),
+                                        cursor: (isOccupied || hasNewOrder || isLinked) ? 'pointer' : 'default',
                                         position: 'relative',
                                         textAlign: 'center',
                                         transition: 'all 0.3s cubic-bezier(0.25, 1, 0.5, 1)'
@@ -1214,17 +1488,17 @@ const AdminPage = () => {
                                         fontSize: '0.7rem',
                                         fontWeight: '700',
                                         letterSpacing: '0.05em',
-                                        backgroundColor: isOccupied ? 'var(--bg-dark)' : (hasNewOrder ? 'var(--text-main)' : 'var(--glass)'),
-                                        color: isOccupied ? 'var(--accent-white)' : (hasNewOrder ? 'var(--bg-dark)' : 'var(--text-muted)')
+                                        backgroundColor: isLinked ? 'rgba(255,255,255,0.1)' : isOccupied ? 'rgba(255,159,67,0.2)' : (hasNewOrder ? 'rgba(0,201,167,0.2)' : 'rgba(255,255,255,0.05)'),
+                                        color: isLinked ? '#94a3b8' : isOccupied ? '#ff9f43' : (hasNewOrder ? '#00c9a7' : '#64748b')
                                     }}>
-                                        {isOccupied ? 'OCCUPIED' : (hasNewOrder ? 'NEW ⚡' : 'FREE')}
+                                        {isLinked ? 'LINKED 🔗' : isOccupied ? 'OCCUPIED' : (hasNewOrder ? 'NEW ⚡' : 'FREE')}
                                     </div>
 
-                                    <h3 style={{ fontSize: '1.6rem', marginBottom: '8px', fontWeight: '700', letterSpacing: '-0.02em', color: isOccupied ? 'var(--bg-dark)' : 'var(--text-main)' }}>Table {table.id}</h3>
+                                    <h3 style={{ fontSize: '1.6rem', marginBottom: '8px', fontWeight: '700', letterSpacing: '-0.02em', color: isOccupied ? '#ff9f43' : '#fff' }}>Table {table.id}</h3>
                                     <p style={{ color: isOccupied ? 'rgba(0,0,0,0.6)' : 'var(--text-muted)', fontSize: '0.9rem', fontWeight: '500' }}>{table.seats} Seats</p>
 
                                     {(isOccupied || hasNewOrder) ? (
-                                        <div style={{ marginTop: '24px', color: isOccupied ? 'var(--bg-dark)' : 'var(--text-main)', fontSize: '0.85rem', fontWeight: '600', letterSpacing: '0.05em' }}>
+                                        <div style={{ marginTop: '24px', color: isOccupied ? '#ff9f43' : '#00c9a7', fontSize: '0.85rem', fontWeight: '600', letterSpacing: '0.05em' }}>
                                             VIEW ORDER →
                                         </div>
                                     ) : (
@@ -1266,7 +1540,7 @@ const AdminPage = () => {
                             const meta = order.items.find(i => i.type === 'METADATA');
                             const parcelNo = meta ? `P-${meta.takeaway_no}` : order.id;
                             const displayItems = order.items.filter(i => i.type !== 'METADATA');
-
+                            
                             return (
                                 <div key={order.id} className="glass" style={{ padding: '24px', borderRadius: '24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                                     <div style={{ flex: 1 }}>
@@ -1303,12 +1577,35 @@ const AdminPage = () => {
                                                     Ready
                                                 </button>
                                             ) : (
-                                                <button
-                                                    onClick={() => setParcelHandoverId(order.id)}
-                                                    style={{ padding: '8px 20px', fontSize: '0.9rem', backgroundColor: '#4ade80', color: '#000', borderRadius: '16px', fontWeight: '700' }}
-                                                >
-                                                    Handover
-                                                </button>
+                                                handoverOrderId === order.id ? (
+                                                    <div style={{ display: 'flex', gap: '8px' }}>
+                                                        <button
+                                                            onClick={() => { setHandoverOrderId(null); completeTakeaway(order.id, 'Cash'); }}
+                                                            style={{ padding: '8px 16px', fontSize: '0.85rem', backgroundColor: '#fbbf24', color: '#000', borderRadius: '16px', fontWeight: '700' }}
+                                                        >
+                                                            Cash
+                                                        </button>
+                                                        <button
+                                                            onClick={() => { setHandoverOrderId(null); completeTakeaway(order.id, 'Online'); }}
+                                                            style={{ padding: '8px 16px', fontSize: '0.85rem', backgroundColor: '#60a5fa', color: '#000', borderRadius: '16px', fontWeight: '700' }}
+                                                        >
+                                                            Online
+                                                        </button>
+                                                        <button
+                                                            onClick={() => setHandoverOrderId(null)}
+                                                            style={{ padding: '8px 12px', fontSize: '0.85rem', backgroundColor: 'var(--glass)', color: 'var(--text-main)', border: '1px solid var(--border-subtle)', borderRadius: '16px', fontWeight: '700' }}
+                                                        >
+                                                            ✕
+                                                        </button>
+                                                    </div>
+                                                ) : (
+                                                    <button
+                                                        onClick={() => setHandoverOrderId(order.id)}
+                                                        style={{ padding: '8px 20px', fontSize: '0.9rem', backgroundColor: '#4ade80', color: '#000', borderRadius: '16px', fontWeight: '700' }}
+                                                    >
+                                                        Handover
+                                                    </button>
+                                                )
                                             )}
                                             <button
                                                 onClick={(e) => { e.stopPropagation(); setInvoiceOrder(order); }}
@@ -1329,7 +1626,7 @@ const AdminPage = () => {
                     </div>
                 ) : (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                        {orders.filter(o => o.table_id !== 0 && o.status !== 'paid' && o.status !== 'rejected').map(order => (
+                        {orders.filter(o => o.table_id !== 0 && o.status !== 'paid' && o.status !== 'rejected' && !(o.items?.length === 1 && o.items[0].type === 'LINK')).map(order => (
                             <div key={order.id} className="glass" style={{ padding: '24px', borderRadius: '24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                                 <div>
                                     <div style={{ display: 'flex', alignItems: 'center', gap: '16px', marginBottom: '12px' }}>
@@ -1365,7 +1662,7 @@ const AdminPage = () => {
                                 </div>
                             </div>
                         ))}
-                        {orders.filter(o => o.table_id !== 0 && o.status !== 'paid' && o.status !== 'rejected').length === 0 && (
+                        {orders.filter(o => o.table_id !== 0 && o.status !== 'paid' && o.status !== 'rejected' && !(o.items?.length === 1 && o.items[0].type === 'LINK')).length === 0 && (
                             <div style={{ textAlign: 'center', padding: '120px 0', color: 'var(--text-muted)', fontSize: '1.2rem', fontWeight: '500', letterSpacing: '-0.01em' }}>
                                 No active orders in queue
                             </div>
@@ -1390,9 +1687,19 @@ const AdminPage = () => {
                         justifyContent: 'center',
                         padding: '24px'
                     }}>
-                        <div className="glass animate-fade" style={{ width: '100%', maxWidth: '560px', borderRadius: '24px', padding: '32px', backgroundColor: 'var(--bg-surface)', boxShadow: '0 24px 48px rgba(0,0,0,0.5), 0 0 0 1px var(--border-subtle)' }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '32px', alignItems: 'center' }}>
-                                <h2 style={{ fontSize: '1.5rem', fontWeight: '600', letterSpacing: '-0.02em', color: 'var(--text-main)' }}>
+                        <div className="glass modal-content" style={{ 
+                            width: '100%', 
+                            maxWidth: '560px', 
+                            maxHeight: '95vh',
+                            borderRadius: '24px', 
+                            padding: '32px', 
+                            backgroundColor: 'var(--bg-surface)', 
+                            boxShadow: 'var(--shadow-xl), 0 0 0 1px var(--border-subtle)', 
+                            display: 'flex', 
+                            flexDirection: 'column' 
+                        }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '32px', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
+                                <h2 style={{ fontSize: '1.2rem', fontWeight: '600', letterSpacing: '-0.02em', color: 'var(--text-main)', display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
                                     {(() => {
                                         if (selectedTableOrder.table_id === 0) {
                                             const meta = selectedTableOrder.items.find(i => i.type === 'METADATA');
@@ -1400,80 +1707,118 @@ const AdminPage = () => {
                                         }
                                         return `Table ${selectedTableOrder.table_id} Order`;
                                     })()}
-                                </h2>
-                                <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                                    {selectedTableOrder.table_id > 0 && (
+                                    {selectedTableOrder.table_id !== 0 && (
                                         <>
-                                            <button onClick={() => setShowTransferModal(true)} style={{ padding: '6px 12px', borderRadius: '12px', border: '1px solid var(--border-subtle)', backgroundColor: 'var(--glass)', color: 'var(--text-main)', fontSize: '0.85rem', fontWeight: '600' }}>Transfer ➡️</button>
-                                            <button onClick={() => setShowCombineModal(true)} style={{ padding: '6px 12px', borderRadius: '12px', border: '1px solid var(--border-subtle)', backgroundColor: 'var(--glass)', color: 'var(--text-main)', fontSize: '0.85rem', fontWeight: '600' }}>Combine 🔗</button>
+                                            <button 
+                                                onClick={() => setShowTransferModal(selectedTableOrder)}
+                                                style={{ fontSize: '0.8rem', padding: '6px 12px', borderRadius: '12px', backgroundColor: 'var(--glass)', border: '1px solid var(--border-subtle)', color: 'var(--text-main)', display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer' }}
+                                            >Transfer ➡️</button>
+                                            <button 
+                                                onClick={() => setShowCombineModal(selectedTableOrder)}
+                                                style={{ fontSize: '0.8rem', padding: '6px 12px', borderRadius: '12px', backgroundColor: 'var(--glass)', border: '1px solid var(--border-subtle)', color: 'var(--text-main)', display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer' }}
+                                            >Combine 🔗</button>
                                         </>
                                     )}
-                                    <button onClick={() => setSelectedTableOrder(null)} style={{ backgroundColor: 'var(--glass)', border: '1px solid var(--border-subtle)', width: '36px', height: '36px', borderRadius: '18px', fontSize: '1.2rem', color: 'var(--text-main)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>✕</button>
-                                </div>
+                                </h2>
+                                <button onClick={() => setSelectedTableOrder(null)} style={{ backgroundColor: 'var(--glass)', border: '1px solid var(--border-subtle)', width: '36px', height: '36px', borderRadius: '18px', fontSize: '1.2rem', color: 'var(--text-main)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>✕</button>
                             </div>
 
-                            <div style={{ marginBottom: '32px' }}>
-                                {(() => {
-                                    const validItems = selectedTableOrder.items.filter(i => i.type !== 'METADATA' && i.type !== 'PAYMENT_METADATA');
-                                    const dineInItems = validItems.filter(i => !i.isParcel);
-                                    const parcelItems = validItems.filter(i => i.isParcel);
+                            <div style={{ flex: 1, overflowY: 'auto', minHeight: '0', display: 'flex', flexDirection: 'column', marginBottom: '32px' }}>
+                                {/* Scrollable Items List */}
+                                <div style={{ marginBottom: '24px', paddingRight: '12px' }}>
+                                    {(() => {
+                                        const validItems = selectedTableOrder.items.filter(i => i.type !== 'METADATA' && i.type !== 'PAYMENT_METADATA');
+                                        const dineInItems = validItems.filter(i => !i.isParcel);
+                                        const parcelItems = validItems.filter(i => i.isParcel);
 
-                                    const renderItem = (item, idxKey) => (
-                                        <div key={idxKey} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '16px', fontSize: '1.1rem', color: 'var(--text-main)', alignItems: 'center' }}>
-                                            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flex: 1 }}>
-                                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', backgroundColor: 'var(--glass)', padding: '4px 8px', borderRadius: '10px', border: '1px solid var(--border-subtle)' }}>
-                                                    <button
-                                                        onClick={() => handleUpdateItemQty(selectedTableOrder.id, item.name, -1, item.isParcel)}
-                                                        style={{ background: 'none', border: 'none', color: 'var(--text-main)', fontSize: '1.2rem', cursor: 'pointer', padding: '0 4px', fontWeight: 'bold' }}
-                                                    >
-                                                        -
-                                                    </button>
-                                                    <span style={{ minWidth: '20px', textAlign: 'center', fontWeight: '700', fontSize: '0.95rem' }}>{item.qty}</span>
-                                                    <button
-                                                        onClick={() => handleUpdateItemQty(selectedTableOrder.id, item.name, 1, item.isParcel)}
-                                                        style={{ background: 'none', border: 'none', color: 'var(--text-main)', fontSize: '1.2rem', cursor: 'pointer', padding: '0 4px', fontWeight: 'bold' }}
-                                                    >
-                                                        +
-                                                    </button>
-                                                </div>
-                                                <span style={{ fontWeight: '500' }}>{item.name}</span>
-                                            </div>
-                                            <span style={{ color: 'var(--text-main)', fontWeight: '600' }}>₹{item.price * item.qty}</span>
-                                        </div>
-                                    );
-
-                                    return (
-                                        <>
-                                            {dineInItems.map((item, i) => renderItem(item, `dine-${i}`))}
-                                            {parcelItems.length > 0 && (
-                                                <div style={{ marginTop: '24px', paddingTop: '16px', borderTop: '1px dashed rgba(255,255,255,0.1)' }}>
-                                                    <div style={{ marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                                        <span style={{ fontSize: '1.2rem' }}>📦</span>
-                                                        <span style={{ fontSize: '0.85rem', fontWeight: '800', textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-muted)' }}>Parcel Items</span>
+                                        const renderItem = (item, idxKey) => (
+                                            <div key={idxKey} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '16px', fontSize: '1.1rem', color: 'var(--text-main)', alignItems: 'center' }}>
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flex: 1 }}>
+                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', backgroundColor: 'var(--glass)', padding: '4px 8px', borderRadius: '10px', border: '1px solid var(--border-subtle)' }}>
+                                                        <button 
+                                                            onClick={() => handleUpdateItemQty(selectedTableOrder.id, item.name, -1, item.isParcel)}
+                                                            style={{ background: 'none', border: 'none', color: 'var(--text-main)', fontSize: '1.2rem', cursor: 'pointer', padding: '0 4px', fontWeight: 'bold' }}
+                                                        >
+                                                            -
+                                                        </button>
+                                                        <span style={{ minWidth: '20px', textAlign: 'center', fontWeight: '700', fontSize: '0.95rem' }}>{item.qty}</span>
+                                                        <button 
+                                                            onClick={() => handleUpdateItemQty(selectedTableOrder.id, item.name, 1, item.isParcel)}
+                                                            style={{ background: 'none', border: 'none', color: 'var(--text-main)', fontSize: '1.2rem', cursor: 'pointer', padding: '0 4px', fontWeight: 'bold' }}
+                                                        >
+                                                            +
+                                                        </button>
                                                     </div>
-                                                    {parcelItems.map((item, i) => renderItem(item, `parcel-${i}`))}
+                                                    <span style={{ fontWeight: '500' }}>{item.name}</span>
                                                 </div>
-                                            )}
-                                        </>
-                                    );
-                                })()}
-                                <div style={{ borderTop: '1px solid var(--border-subtle)', paddingTop: '20px', marginTop: '20px', display: 'flex', justifyContent: 'space-between', fontWeight: '700', fontSize: '1.6rem', letterSpacing: '-0.02em', color: 'var(--text-main)' }}>
-                                    <span style={{ color: 'var(--text-muted)', fontSize: '1.2rem', fontWeight: '500', alignSelf: 'center' }}>Total</span>
-                                    <span>₹{selectedTableOrder.total}</span>
+                                                <span style={{ color: 'var(--text-main)', fontWeight: '600' }}>₹{item.price * item.qty}</span>
+                                            </div>
+                                        );
+
+                                        return (
+                                            <>
+                                                {dineInItems.map((item, i) => renderItem(item, `dine-${i}`))}
+                                                {parcelItems.length > 0 && (
+                                                    <div style={{ marginTop: '24px', paddingTop: '16px', borderTop: '1px dashed rgba(255,255,255,0.1)' }}>
+                                                        <div style={{ marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                                            <span style={{ fontSize: '1.2rem' }}>📦</span>
+                                                            <span style={{ fontSize: '0.85rem', fontWeight: '800', textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-muted)' }}>Parcel Items</span>
+                                                        </div>
+                                                        {parcelItems.map((item, i) => renderItem(item, `parcel-${i}`))}
+                                                    </div>
+                                                )}
+                                            </>
+                                        );
+                                    })()}
+                                </div>
+                                <div style={{ borderTop: '1px solid var(--border-subtle)', paddingTop: '20px', marginTop: '20px', display: 'flex', justifyContent: 'space-between', fontWeight: '700', fontSize: 'clamp(1.2rem, 4vw, 1.6rem)', letterSpacing: '-0.02em', color: 'var(--text-main)', flexWrap: 'wrap', gap: '8px' }}>
+                                    <span style={{ color: 'var(--text-muted)', fontSize: '1rem', fontWeight: '500', alignSelf: 'center' }}>Total</span>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                        <span style={{ fontSize: '1.2rem', color: 'var(--text-muted)' }}>₹</span>
+                                        <input 
+                                            type="number"
+                                            value={editTotal}
+                                            onChange={(e) => {
+                                                const newTotal = parseFloat(e.target.value) || 0;
+                                                setEditTotal(newTotal);
+                                                if (isSplitPayment) {
+                                                    setSplitOnlineAmount(Math.max(0, newTotal - splitCashAmount));
+                                                }
+                                            }}
+                                            onBlur={async () => {
+                                                if (editTotal !== selectedTableOrder.total) {
+                                                    await supabase.from('orders').update({ total: editTotal }).eq('id', selectedTableOrder.id);
+                                                    setSelectedTableOrder(prev => ({ ...prev, total: editTotal }));
+                                                }
+                                            }}
+                                            style={{ 
+                                                width: '100px', 
+                                                background: 'var(--glass)', 
+                                                border: '1px solid var(--border-subtle)', 
+                                                borderRadius: '12px', 
+                                                color: 'var(--text-main)', 
+                                                fontSize: '1.4rem', 
+                                                fontWeight: '800',
+                                                padding: '4px 8px',
+                                                textAlign: 'right',
+                                                outline: 'none'
+                                            }}
+                                        />
+                                    </div>
                                 </div>
 
                                 {/* Add Item Section */}
                                 <div style={{ marginTop: '20px', borderTop: '1px dashed var(--border-subtle)', paddingTop: '20px' }}>
                                     {!isAddingItem ? (
-                                        <button
+                                        <button 
                                             onClick={() => setIsAddingItem(true)}
-                                            style={{
-                                                width: '100%',
-                                                padding: '12px',
-                                                backgroundColor: 'rgba(255,255,255,0.05)',
-                                                border: '1px solid var(--border-subtle)',
-                                                borderRadius: '12px',
-                                                color: 'var(--text-main)',
+                                            style={{ 
+                                                width: '100%', 
+                                                padding: '12px', 
+                                                backgroundColor: 'rgba(255,255,255,0.05)', 
+                                                border: '1px solid var(--border-subtle)', 
+                                                borderRadius: '12px', 
+                                                color: 'var(--text-main)', 
                                                 fontWeight: '600',
                                                 cursor: 'pointer'
                                             }}
@@ -1483,20 +1828,20 @@ const AdminPage = () => {
                                     ) : (
                                         <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                                             <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                                                <input
-                                                    type="text"
-                                                    placeholder="Search item..."
+                                                <input 
+                                                    type="text" 
+                                                    placeholder="Search item..." 
                                                     value={addItemSearch}
                                                     onChange={(e) => setAddItemSearch(e.target.value)}
                                                     autoFocus
                                                     className="glass"
-                                                    style={{ flex: 1, padding: '10px 16px', borderRadius: '12px', color: 'white', border: '1px solid var(--border-subtle)', outline: 'none', fontSize: '0.9rem' }}
+                                                    style={{ flex: 1, padding: '10px 16px', borderRadius: '12px', color: 'var(--text-main)', border: '1px solid var(--border-subtle)', outline: 'none', fontSize: '0.9rem' }}
                                                 />
                                                 <label style={{ display: 'flex', alignItems: 'center', gap: '6px', color: 'var(--text-main)', fontSize: '0.85rem', cursor: 'pointer', backgroundColor: 'rgba(255,255,255,0.05)', padding: '10px 12px', borderRadius: '12px', border: '1px solid var(--border-subtle)', whiteSpace: 'nowrap' }}>
                                                     <input type="checkbox" checked={isAddNewAsParcel} onChange={(e) => setIsAddNewAsParcel(e.target.checked)} style={{ cursor: 'pointer' }} />
                                                     Add as Parcel
                                                 </label>
-                                                <button onClick={() => { setIsAddingItem(false); setAddItemSearch(''); setIsAddNewAsParcel(false); }} style={{ background: 'var(--glass)', border: '1px solid var(--border-subtle)', width: '40px', borderRadius: '12px', color: 'white' }}>✕</button>
+                                                <button onClick={() => { setIsAddingItem(false); setAddItemSearch(''); setIsAddNewAsParcel(false); }} style={{ background: 'var(--glass)', border: '1px solid var(--border-subtle)', width: '40px', borderRadius: '12px', color: 'var(--text-main)' }}>✕</button>
                                             </div>
                                             {addItemSearch && (
                                                 <div style={{ maxHeight: '200px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '8px', padding: '4px' }}>
@@ -1504,7 +1849,7 @@ const AdminPage = () => {
                                                         .filter(i => i.is_available !== false)
                                                         .filter(i => i.name.toLowerCase().includes(addItemSearch.toLowerCase()))
                                                         .map(item => (
-                                                            <button
+                                                            <button 
                                                                 key={item.id}
                                                                 onClick={async () => {
                                                                     await placeManualOrder(selectedTableOrder.table_id, [{ ...item, qty: 1, isParcel: isAddNewAsParcel }]);
@@ -1519,14 +1864,14 @@ const AdminPage = () => {
                                                                         if (latest) setSelectedTableOrder(latest);
                                                                     }
                                                                 }}
-                                                                style={{
-                                                                    display: 'flex',
-                                                                    justifyContent: 'space-between',
-                                                                    padding: '12px 16px',
-                                                                    backgroundColor: 'rgba(255,255,255,0.03)',
-                                                                    border: '1px solid var(--border-subtle)',
-                                                                    borderRadius: '12px',
-                                                                    color: 'white',
+                                                                style={{ 
+                                                                    display: 'flex', 
+                                                                    justifyContent: 'space-between', 
+                                                                    padding: '12px 16px', 
+                                                                    backgroundColor: 'rgba(255,255,255,0.03)', 
+                                                                    border: '1px solid var(--border-subtle)', 
+                                                                    borderRadius: '12px', 
+                                                                    color: 'var(--text-main)',
                                                                     textAlign: 'left',
                                                                     cursor: 'pointer'
                                                                 }}
@@ -1545,8 +1890,8 @@ const AdminPage = () => {
                                 {/* Customer Info for Direct Payment */}
                                 <div style={{ marginTop: '20px', borderTop: '1px solid var(--border-subtle)', paddingTop: '20px', display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '20px' }}>
                                     <div style={{ position: 'relative' }}>
-                                        <input
-                                            type="text"
+                                        <input 
+                                            type="text" 
                                             placeholder="Customer Phone (10 digits)"
                                             className="glass"
                                             value={payPhone}
@@ -1555,7 +1900,7 @@ const AdminPage = () => {
                                                 setPayPhone(val);
                                                 checkCustomerByPhone(val);
                                             }}
-                                            style={{ width: '100%', padding: '12px 16px', borderRadius: '12px', color: 'white', border: '1px solid var(--border-subtle)', outline: 'none', fontSize: '1rem' }}
+                                            style={{ width: '100%', padding: '12px 16px', borderRadius: '12px', color: 'var(--text-main)', border: '1px solid var(--border-subtle)', outline: 'none', fontSize: '1rem' }}
                                         />
                                         {payExists && (
                                             <span style={{ position: 'absolute', right: '16px', top: '50%', transform: 'translateY(-50%)', fontSize: '0.8rem', color: '#4ade80', fontWeight: '800' }}>
@@ -1563,101 +1908,115 @@ const AdminPage = () => {
                                             </span>
                                         )}
                                     </div>
-                                    <input
-                                        type="text"
+                                    <input 
+                                        type="text" 
                                         placeholder="Customer Name"
                                         className="glass"
                                         value={payName}
                                         onChange={(e) => setPayName(e.target.value)}
-                                        style={{ width: '100%', padding: '12px 16px', borderRadius: '12px', color: 'white', border: '1px solid var(--border-subtle)', outline: 'none', fontSize: '1rem' }}
+                                        style={{ width: '100%', padding: '12px 16px', borderRadius: '12px', color: 'var(--text-main)', border: '1px solid var(--border-subtle)', outline: 'none', fontSize: '1rem' }}
                                     />
                                     {payExists && (
                                         <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text-muted)', fontStyle: 'italic', paddingLeft: '4px' }}>* Returning customer detected</p>
                                     )}
                                 </div>
+
+                                {/* Split Payment Controls */}
+                                {isSplitPayment && (
+                                    <div className="glass animate-fade" style={{ padding: '20px', borderRadius: '20px', border: '1px solid var(--border-subtle)', marginBottom: '20px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                            <span style={{ fontWeight: '700', fontSize: '0.9rem', color: 'var(--amber)' }}>SPLIT PAYMENT</span>
+                                            <button onClick={() => setIsSplitPayment(false)} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}>✕ Cancel</button>
+                                        </div>
+                                        <div style={{ display: 'flex', gap: '12px' }}>
+                                            <div style={{ flex: 1 }}>
+                                                <label style={{ fontSize: '0.75rem', color: 'var(--text-muted)', display: 'block', marginBottom: '6px' }}>CASH AMOUNT</label>
+                                                <input 
+                                                    type="number"
+                                                    value={splitCashAmount}
+                                                    onChange={(e) => {
+                                                        const val = parseFloat(e.target.value) || 0;
+                                                        setSplitCashAmount(val);
+                                                        setSplitOnlineAmount(Math.max(0, editTotal - val));
+                                                    }}
+                                                    className="glass"
+                                                    style={{ width: '100%', padding: '12px', borderRadius: '12px', color: 'var(--text-main)', border: '1px solid var(--border-subtle)', fontSize: '1.1rem', fontWeight: '700' }}
+                                                />
+                                            </div>
+                                            <div style={{ flex: 1 }}>
+                                                <label style={{ fontSize: '0.75rem', color: 'var(--text-muted)', display: 'block', marginBottom: '6px' }}>ONLINE AMOUNT</label>
+                                                <input 
+                                                    type="number"
+                                                    value={splitOnlineAmount}
+                                                    onChange={(e) => {
+                                                        const val = parseFloat(e.target.value) || 0;
+                                                        setSplitOnlineAmount(val);
+                                                        setSplitCashAmount(Math.max(0, editTotal - val));
+                                                    }}
+                                                    className="glass"
+                                                    style={{ width: '100%', padding: '12px', borderRadius: '12px', color: 'var(--text-main)', border: '1px solid var(--border-subtle)', fontSize: '1.1rem', fontWeight: '700' }}
+                                                />
+                                            </div>
+                                        </div>
+                                        <div style={{ fontSize: '0.8rem', color: (splitCashAmount + splitOnlineAmount === editTotal) ? 'var(--teal)' : '#f87171', textAlign: 'center', fontWeight: '600' }}>
+                                            {(splitCashAmount + splitOnlineAmount === editTotal) 
+                                                ? '✓ Amounts match total' 
+                                                : `⚠ Total sum must be ₹${editTotal} (Current: ₹${splitCashAmount + splitOnlineAmount})`}
+                                        </div>
+                                    </div>
+                                )}
                             </div>
 
-                            <div style={{ display: 'flex', gap: '16px' }}>
+                            <div style={{ display: 'flex', gap: '16px', alignItems: 'center', flexShrink: 0 }}>
                                 {selectedTableOrder.status === 'new' && (
                                     <button
                                         onClick={() => acceptOrder(selectedTableOrder.id, selectedTableOrder.table_id)}
-                                        style={{ flex: 1, padding: '16px', backgroundColor: 'var(--text-main)', color: 'var(--bg-dark)', fontWeight: '700', borderRadius: '16px', cursor: 'pointer' }}
+                                        style={{ height: '56px', flex: 1, backgroundColor: 'var(--text-main)', color: 'var(--bg-dark)', fontWeight: '700', borderRadius: '16px', cursor: 'pointer' }}
                                     >
                                         Take Order
                                     </button>
                                 )}
-                                <button
-                                    onClick={() => markTableFree(selectedTableOrder.table_id, 'Cash')}
-                                    style={{ flex: 1, padding: '16px', backgroundColor: '#fbbf24', color: '#000', fontWeight: '700', borderRadius: '16px', cursor: 'pointer' }}
-                                >
-                                    Paid CASH
-                                </button>
-                                <button
-                                    onClick={() => markTableFree(selectedTableOrder.table_id, 'Online')}
-                                    style={{ flex: 1, padding: '16px', backgroundColor: '#60a5fa', color: '#000', fontWeight: '700', borderRadius: '16px', cursor: 'pointer' }}
-                                >
-                                    Paid ONLINE
-                                </button>
+                                {!isSplitPayment ? (
+                                    <>
+                                        <button
+                                            onClick={() => selectedTableOrder.table_id == 0 ? completeTakeaway(selectedTableOrder.id, 'Cash') : markTableFree(selectedTableOrder.table_id, 'Cash')}
+                                            style={{ height: '56px', flex: 1, backgroundColor: '#fbbf24', color: '#000', fontWeight: '700', borderRadius: '16px', cursor: 'pointer' }}
+                                        >
+                                            Paid CASH
+                                        </button>
+                                        <button
+                                            onClick={() => {
+                                                setIsSplitPayment(true);
+                                                setSplitCashAmount(editTotal);
+                                                setSplitOnlineAmount(0);
+                                            }}
+                                            style={{ width: '56px', height: '56px', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: 'var(--glass)', border: '1px solid var(--border-subtle)', color: 'var(--text-main)', fontSize: '1.5rem', fontWeight: '700', borderRadius: '16px', cursor: 'pointer' }}
+                                            title="Split Payment (Cash + Online)"
+                                        >
+                                            +
+                                        </button>
+                                        <button
+                                            onClick={() => selectedTableOrder.table_id == 0 ? completeTakeaway(selectedTableOrder.id, 'Online') : markTableFree(selectedTableOrder.table_id, 'Online')}
+                                            style={{ height: '56px', flex: 1, backgroundColor: '#60a5fa', color: '#000', fontWeight: '700', borderRadius: '16px', cursor: 'pointer' }}
+                                        >
+                                            Paid ONLINE
+                                        </button>
+                                    </>
+                                ) : (
+                                    <button
+                                        disabled={splitCashAmount + splitOnlineAmount !== editTotal}
+                                        onClick={() => selectedTableOrder.table_id == 0 ? completeTakeaway(selectedTableOrder.id, 'Split', { cash: splitCashAmount, online: splitOnlineAmount }) : markTableFree(selectedTableOrder.table_id, 'Split', { cash: splitCashAmount, online: splitOnlineAmount })}
+                                        style={{ height: '56px', flex: 2, backgroundColor: 'var(--teal)', color: '#000', fontWeight: '700', borderRadius: '16px', cursor: (splitCashAmount + splitOnlineAmount !== editTotal) ? 'not-allowed' : 'pointer', opacity: (splitCashAmount + splitOnlineAmount !== editTotal) ? 0.5 : 1 }}
+                                    >
+                                        Confirm Split Payment (₹{splitCashAmount} + ₹{splitOnlineAmount})
+                                    </button>
+                                )}
                                 <button
                                     onClick={() => setInvoiceOrder(selectedTableOrder)}
-                                    style={{ flex: 1, padding: '16px', backgroundColor: 'var(--accent-white)', color: 'var(--bg-dark)', fontWeight: '700', borderRadius: '16px', cursor: 'pointer' }}
+                                    style={{ height: '56px', width: '90px', backgroundColor: 'var(--accent-white)', color: 'var(--bg-dark)', fontWeight: '700', borderRadius: '16px', cursor: 'pointer' }}
                                 >
                                     Invoice
                                 </button>
-                            </div>
-                        </div>
-                    </div>
-                )}
-
-                {/* Transfer Modal */}
-                {showTransferModal && (
-                    <div className="animate-overlay" style={{ position: 'fixed', inset: 0, zIndex: 2500, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(8px)', padding: '24px' }}>
-                        <div className="glass animate-fade" style={{ width: '100%', maxWidth: '400px', borderRadius: '24px', padding: '32px', backgroundColor: 'var(--bg-surface)' }}>
-                            <h3 style={{ fontSize: '1.2rem', fontWeight: '700', marginBottom: '16px' }}>Transfer Order</h3>
-                            <p style={{ fontSize: '0.9rem', color: 'var(--text-muted)', marginBottom: '24px' }}>Select an empty table to transfer this order to.</p>
-                            
-                            <select
-                                className="glass"
-                                value={tableActionTarget}
-                                onChange={(e) => setTableActionTarget(e.target.value)}
-                                style={{ width: '100%', padding: '12px', borderRadius: '12px', marginBottom: '24px', color: 'var(--text-main)', outline: 'none' }}
-                            >
-                                <option value="" style={{ color: 'black' }}>-- Select Empty Table --</option>
-                                {tables.filter(t => t.is_free && t.id !== 0).map(t => (
-                                    <option key={t.id} value={t.id} style={{ color: 'black' }}>Table {t.id}</option>
-                                ))}
-                            </select>
-
-                            <div style={{ display: 'flex', gap: '12px' }}>
-                                <button onClick={() => { setShowTransferModal(false); setTableActionTarget(''); }} style={{ flex: 1, padding: '12px', borderRadius: '12px', background: 'var(--glass)', color: 'white' }}>Cancel</button>
-                                <button onClick={handleTransferTable} disabled={!tableActionTarget} style={{ flex: 1, padding: '12px', borderRadius: '12px', background: tableActionTarget ? 'var(--text-main)' : 'var(--glass)', color: 'var(--bg-dark)', fontWeight: '700', opacity: tableActionTarget ? 1 : 0.5 }}>Confirm</button>
-                            </div>
-                        </div>
-                    </div>
-                )}
-
-                {/* Combine Modal */}
-                {showCombineModal && (
-                    <div className="animate-overlay" style={{ position: 'fixed', inset: 0, zIndex: 2500, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(8px)', padding: '24px' }}>
-                        <div className="glass animate-fade" style={{ width: '100%', maxWidth: '400px', borderRadius: '24px', padding: '32px', backgroundColor: 'var(--bg-surface)' }}>
-                            <h3 style={{ fontSize: '1.2rem', fontWeight: '700', marginBottom: '16px' }}>Combine Order</h3>
-                            <p style={{ fontSize: '0.9rem', color: 'var(--text-muted)', marginBottom: '24px' }}>Select a table to merge into the current order.</p>
-                            
-                            <select
-                                className="glass"
-                                value={tableActionTarget}
-                                onChange={(e) => setTableActionTarget(e.target.value)}
-                                style={{ width: '100%', padding: '12px', borderRadius: '12px', marginBottom: '24px', color: 'var(--text-main)', outline: 'none' }}
-                            >
-                                <option value="" style={{ color: 'black' }}>-- Select Table to Combine --</option>
-                                {tables.filter(t => t.id !== selectedTableOrder?.table_id && t.id !== 0).map(t => (
-                                    <option key={t.id} value={t.id} style={{ color: 'black' }}>Table {t.id} {t.is_free ? '(Free)' : '(Occupied)'}</option>
-                                ))}
-                            </select>
-
-                            <div style={{ display: 'flex', gap: '12px' }}>
-                                <button onClick={() => { setShowCombineModal(false); setTableActionTarget(''); }} style={{ flex: 1, padding: '12px', borderRadius: '12px', background: 'var(--glass)', color: 'white' }}>Cancel</button>
-                                <button onClick={handleCombineTable} disabled={!tableActionTarget} style={{ flex: 1, padding: '12px', borderRadius: '12px', background: tableActionTarget ? 'var(--text-main)' : 'var(--glass)', color: 'var(--bg-dark)', fontWeight: '700', opacity: tableActionTarget ? 1 : 0.5 }}>Confirm</button>
                             </div>
                         </div>
                     </div>
@@ -1681,7 +2040,7 @@ const AdminPage = () => {
                     justifyContent: 'center',
                     padding: '24px'
                 }}>
-                    <div className="glass animate-fade" style={{
+                    <div className="glass modal-content" style={{
                         width: '100%',
                         maxWidth: '430px',
                         borderRadius: '32px',
@@ -1696,96 +2055,145 @@ const AdminPage = () => {
                         maxHeight: '90vh',
                         overflowY: 'auto'
                     }}>
-                        <button
-                            onClick={() => setQrTable(null)}
-                            style={{
-                                position: 'absolute',
-                                top: '20px',
-                                right: '20px',
-                                background: 'var(--glass)',
-                                border: '1px solid var(--border-subtle)',
-                                width: '36px',
-                                height: '36px',
-                                borderRadius: '18px',
-                                color: 'white',
+                        <button 
+                            onClick={() => setQrTable(null)} 
+                            style={{ 
+                                position: 'absolute', 
+                                top: '20px', 
+                                right: '20px', 
+                                background: 'var(--glass)', 
+                                border: '1px solid var(--border-subtle)', 
+                                width: '36px', 
+                                height: '36px', 
+                                borderRadius: '18px', 
+                                color: 'var(--text-main)', 
                                 cursor: 'pointer',
                                 zIndex: 10
                             }}
                         >✕</button>
 
                         {/* Designed QR Card for Printing */}
-                        <div id="qr-to-print" style={{
+                        <div id="qr-to-print" style={{ 
                             position: 'relative',
                             width: '320px',
+                            height: '480px',
                             boxShadow: '0 20px 50px rgba(0,0,0,0.2)',
                             overflow: 'hidden',
-                            backgroundColor: 'var(--bg-dark)',
-                            background: 'linear-gradient(145deg, #0f172a 0%, #020617 100%)',
-                            fontSize: '16px',
-                            paddingBottom: '480px'
+                            backgroundColor: '#26817B',
+                            padding: '16px',
+                            boxSizing: 'border-box'
                         }}>
-                            <div className="qr-card-content" style={{
-                                position: 'absolute', inset: 0,
-                                display: 'flex', flexDirection: 'column', alignItems: 'center',
-                                justifyContent: 'space-between', padding: '13% 10%', boxSizing: 'border-box'
+                            <div style={{
+                                width: '100%',
+                                height: '100%',
+                                border: '2px solid #E3C565',
+                                borderRadius: '6px',
+                                boxSizing: 'border-box',
+                                display: 'flex',
+                                flexDirection: 'column',
+                                alignItems: 'center',
+                                padding: '16px 12px',
+                                justifyContent: 'space-between'
                             }}>
-                                {/* Inner Gold Border */}
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+                                    <img src="/fooodweb-logo.jpeg" alt="logo" style={{ width: '36px', height: '36px', objectFit: 'cover', borderRadius: '50%', border: '2px solid #E3C565' }} />
+                                    <h2 style={{ 
+                                        margin: 0, 
+                                        color: '#E3C565', 
+                                        fontFamily: 'serif', 
+                                        fontSize: '1.6rem', 
+                                        letterSpacing: '0.08em',
+                                        textShadow: '2px 2px 4px rgba(0,0,0,0.5)',
+                                        fontWeight: '800'
+                                    }}>FOOODWEB</h2>
+                                </div>
+                                
                                 <div style={{
-                                    position: 'absolute', top: '4%', right: '4%', bottom: '4%', left: '4%',
-                                    border: '3px solid var(--primary)', pointerEvents: 'none', zIndex: 0
-                                }} />
-
-                                {/* Noise / Texture Overlay */}
-                                <div style={{
-                                    position: 'absolute', inset: 0, zIndex: 0, opacity: 0.1,
-                                    backgroundImage: 'url("data:image/svg+xml,%3Csvg viewBox=%220 0 200 200%22 xmlns=%22http://www.w3.org/2000/svg%22%3E%3Cfilter id=%22noiseFilter%22%3E%3CfeTurbulence type=%22fractalNoise%22 baseFrequency=%220.65%22 numOctaves=%223%22 stitchTiles=%22stitch%22/%3E%3C/filter%3E%3Crect width=%22100%25%22 height=%22100%25%22 filter=%22url(%23noiseFilter)%22/%3E%3C/svg%3E")'
-                                }} />
-
-                                <h1 style={{
-                                    color: 'var(--primary)', fontFamily: '"Times New Roman", Times, serif',
-                                    fontSize: '180%', fontWeight: 'bold', letterSpacing: '2px',
-                                    margin: '0', textShadow: '2px 2px 4px rgba(0,0,0,0.5)',
-                                    zIndex: 1, textAlign: 'center'
-                                }}>FOOOD WEB</h1>
-
-                                <div style={{
-                                    width: '58%', aspectRatio: '1', backgroundColor: '#ffffff',
-                                    borderRadius: '16px', border: '4px solid var(--primary)',
-                                    boxShadow: '0 8px 16px rgba(0,0,0,0.4)', zIndex: 1,
-                                    display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-                                    padding: '5%', boxSizing: 'border-box'
+                                    backgroundColor: 'white',
+                                    borderRadius: '16px',
+                                    border: '4px solid #E3C565',
+                                    padding: '16px',
+                                    display: 'flex',
+                                    flexDirection: 'column',
+                                    alignItems: 'center',
+                                    boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
+                                    marginBottom: '8px',
+                                    width: '180px',
+                                    height: '180px',
+                                    justifyContent: 'center',
+                                    boxSizing: 'content-box'
                                 }}>
                                     <QRCodeSVG
-                                        value={`${qrBaseUrl.replace(/\/$/, '')}/menu?table=${qrTable.id}&tk=${qrTable.isTakeaway ? '1' : '0'}`}
-                                        size={256}
-                                        style={{ width: '100%', height: 'calc(100% - 15px)' }}
-                                        bgColor="#ffffff" fgColor="#000000" level="H" includeMargin={false}
+                                        value={`${qrBaseUrl.startsWith('http') ? '' : window.location.protocol + '//'}${qrBaseUrl.replace(/\/$/, '')}/menu?table=${qrTable.id}&tk=${qrTable.isTakeaway ? '1' : '0'}`}
+                                        size={150}
+                                        style={{ width: '150px', height: '150px', marginBottom: '8px' }}
+                                        bgColor="#ffffff"
+                                        fgColor="#000000"
+                                        level="H"
+                                        includeMargin={false}
                                     />
-                                    <div style={{ fontSize: '75%', fontWeight: '900', color: '#000', marginTop: '4%', textAlign: 'center', fontFamily: 'sans-serif' }}>
+                                    <div style={{ fontSize: '1.1rem', fontWeight: '900', color: '#000', textAlign: 'center', fontFamily: 'sans-serif', letterSpacing: '0.05em' }}>
                                         {qrTable.isTakeaway ? 'PARCEL' : `TABLE ${qrTable.id}`}
                                     </div>
                                 </div>
 
-                                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: '100%', gap: '8px', zIndex: 1 }}>
-                                    <div style={{
-                                        color: 'var(--primary)', fontFamily: '"Brush Script MT", "Great Vibes", cursive',
-                                        fontSize: '200%', textShadow: '1px 1px 2px rgba(0,0,0,0.5)',
-                                        textAlign: 'center', fontStyle: 'italic'
-                                    }}>Scan to Order</div>
+                                <div style={{ textAlign: 'center', width: '100%', marginBottom: '8px' }}>
+                                    <h3 style={{
+                                        margin: '0 0 6px 0',
+                                        color: '#E3C565',
+                                        fontFamily: '"Brush Script MT", cursive',
+                                        fontSize: '2rem',
+                                        fontWeight: '500',
+                                        textShadow: '1px 1px 3px rgba(0,0,0,0.3)',
+                                        fontStyle: 'italic',
+                                        lineHeight: 1
+                                    }}>Scan to Order</h3>
+                                    
+                                    <div style={{ width: '100px', height: '1.5px', backgroundColor: '#E3C565', margin: '0 auto 8px auto', opacity: 0.9 }}></div>
+                                    
+                                    <p style={{
+                                        margin: '0',
+                                        color: '#E3C565',
+                                        fontFamily: 'serif',
+                                        fontSize: '1rem',
+                                        letterSpacing: '0.05em',
+                                        fontWeight: '600'
+                                    }}>www.fooodweb.com</p>
+                                </div>
 
-                                    <div style={{ width: '70%', height: '1.5px', backgroundColor: 'var(--primary)', boxShadow: '0 1px 2px rgba(0,0,0,0.3)' }} />
-
-                                    <div style={{
-                                        color: 'var(--primary)', fontFamily: '"Times New Roman", Times, serif',
-                                        fontSize: '110%', letterSpacing: '1px', textAlign: 'center'
-                                    }}>www.fooodweb.com</div>
-                                    <div>FOOOD WEB</div>
-                                    <div style={{ opacity: 0.9 }}>POWERED BY SILOVATION TECHNOLOGIES</div>
+                                <div style={{ textAlign: 'center', width: '100%' }}>
+                                    <p style={{ margin: '0 0 2px 0', color: '#E3C565', fontSize: '0.75rem', fontWeight: '800', letterSpacing: '0.1em' }}>FOOODWEB</p>
+                                    <p style={{ margin: 0, color: '#E3C565', fontSize: '0.55rem', fontWeight: '800', letterSpacing: '0.05em', opacity: 0.9 }}>POWERED BY SILOVATION TECHNOLOGIES</p>
                                 </div>
                             </div>
                         </div>
 
-                        {/* Mobile link input removed per request */}
+                        {/* Test Link for PC Testing */}
+                        <button 
+                            className="no-print" 
+                            onClick={() => {
+                                const urlPrefix = qrBaseUrl.startsWith('http') ? qrBaseUrl : `${window.location.protocol}//${qrBaseUrl}`;
+                                window.open(`${urlPrefix.replace(/\/$/, '')}/menu?table=${qrTable.id}&tk=${qrTable.isTakeaway ? '1' : '0'}`, '_blank');
+                            }} 
+                            style={{ 
+                                width: '100%', 
+                                padding: '16px', 
+                                backgroundColor: '#26817B', 
+                                borderRadius: '16px', 
+                                border: '1px solid #E3C565',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                gap: '10px',
+                                cursor: 'pointer',
+                                color: '#E3C565',
+                                fontWeight: '800',
+                                fontSize: '1rem',
+                                boxShadow: '0 4px 12px rgba(0,0,0,0.3)'
+                            }}
+                        >
+                            🔗 Open Menu (PC Test)
+                        </button>
 
                         <button
                             className="no-print"
@@ -1823,62 +2231,13 @@ const AdminPage = () => {
                 </div>
             )}
 
-            {/* Parcel Handover Payment Modal */}
-            {parcelHandoverId && (() => {
-                const parcelOrder = orders.find(o => o.id === parcelHandoverId);
-                const parcelItems = parcelOrder?.items?.filter(i => i.type !== 'METADATA' && i.type !== 'PAYMENT_METADATA' && i.type !== 'COMBINED') || [];
-                const parcelMeta = parcelOrder?.items?.find(i => i.type === 'METADATA');
-                return (
-                    <div className="animate-overlay" style={{ position: 'fixed', inset: 0, zIndex: 3500, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(12px)', padding: '24px' }}>
-                        <div className="glass animate-fade" style={{ width: '100%', maxWidth: '420px', borderRadius: '28px', padding: '36px', backgroundColor: 'var(--bg-surface)' }}>
-                            <h3 style={{ fontSize: '1.3rem', fontWeight: '800', marginBottom: '4px' }}>Parcel Handover</h3>
-                            <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginBottom: '24px' }}>
-                                Order #{parcelMeta ? `P-${parcelMeta.takeaway_no}` : parcelHandoverId}
-                            </p>
-
-                            {/* Order Items Summary */}
-                            <div style={{ background: 'rgba(255,255,255,0.03)', borderRadius: '16px', padding: '16px', marginBottom: '24px', border: '1px solid var(--border-subtle)' }}>
-                                {parcelItems.map((item, i) => (
-                                    <div key={i} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px', fontSize: '0.9rem' }}>
-                                        <span style={{ color: 'var(--text-main)' }}>{item.qty}x {item.name}</span>
-                                        <span style={{ color: 'var(--text-muted)' }}>₹{item.price * item.qty}</span>
-                                    </div>
-                                ))}
-                                <div style={{ borderTop: '1px solid var(--border-subtle)', marginTop: '12px', paddingTop: '12px', display: 'flex', justifyContent: 'space-between', fontWeight: '800' }}>
-                                    <span>Total</span>
-                                    <span>₹{parcelOrder?.total}</span>
-                                </div>
-                            </div>
-
-                            <p style={{ fontSize: '0.9rem', fontWeight: '700', color: 'var(--text-main)', marginBottom: '16px' }}>Select Payment Method</p>
-                            <div style={{ display: 'flex', gap: '12px', marginBottom: '20px' }}>
-                                <button
-                                    onClick={() => completeTakeaway(parcelHandoverId, 'Cash')}
-                                    style={{ flex: 1, padding: '16px', borderRadius: '16px', background: '#fbbf24', color: '#000', fontWeight: '800', fontSize: '1.05rem' }}
-                                >
-                                    💵 Cash
-                                </button>
-                                <button
-                                    onClick={() => completeTakeaway(parcelHandoverId, 'Online')}
-                                    style={{ flex: 1, padding: '16px', borderRadius: '16px', background: '#60a5fa', color: '#000', fontWeight: '800', fontSize: '1.05rem' }}
-                                >
-                                    📲 Online
-                                </button>
-                            </div>
-                            <button onClick={() => setParcelHandoverId(null)} style={{ width: '100%', padding: '12px', borderRadius: '14px', background: 'var(--glass)', border: '1px solid var(--border-subtle)', color: 'var(--text-main)', fontWeight: '600' }}>
-                                Cancel
-                            </button>
-                        </div>
-                    </div>
-                );
-            })()}
-
             {/* Real-time Order Popup */}
             {newOrder && (
                 <OrderPopup
                     order={newOrder}
                     onAccept={acceptOrder}
-                    onDismiss={() => rejectOrder(newOrder.id)}
+                    onDismiss={() => rejectOrder(newOrder)}
+                    onUpdateItemQty={handleUpdateItemQty}
                 />
             )}
 
@@ -1887,7 +2246,7 @@ const AdminPage = () => {
                 order={invoiceOrder}
                 isOpen={!!invoiceOrder}
                 onClose={() => setInvoiceOrder(null)}
-                onPaid={(method) => handleOrderPaid(invoiceOrder.id, method)}
+                onPaid={(method) => invoiceOrder.table_id == 0 ? completeTakeaway(invoiceOrder.id, method) : markTableFree(invoiceOrder.table_id, method)}
             />
 
             {/* Bulk QR Modal */}
@@ -1901,7 +2260,7 @@ const AdminPage = () => {
             {/* Recipe Mapping Modal */}
             {mappingItem && (
                 <div style={{ position: 'fixed', inset: 0, zIndex: 4000, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.8)', backdropFilter: 'blur(12px)' }}>
-                    <div className="glass" style={{ width: '100%', maxWidth: '480px', borderRadius: '24px', padding: '32px' }}>
+                    <div className="glass modal-content" style={{ width: '100%', maxWidth: '480px', borderRadius: '24px', padding: '32px' }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
                             <h3 style={{ fontSize: '1.2rem', fontWeight: '800' }}>Recipe: {mappingItem.name}</h3>
                             <button onClick={() => { setMappingItem(null); setNewMatId(''); setNewMatQty(''); }} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', fontSize: '1.5rem' }}>✕</button>
@@ -1935,7 +2294,7 @@ const AdminPage = () => {
                                     style={{ flex: 1, padding: '12px', borderRadius: '12px', color: 'var(--text-main)', fontSize: '0.85rem' }}
                                 >
                                     <option value="">Select Material</option>
-                                    {materials.map(m => <option key={m.id} value={m.id} style={{ color: 'black' }}>{m.name}</option>)}
+                                    {materials.map(m => <option key={m.id} value={m.id} style={{color:'var(--bg-dark)'}}>{m.name}</option>)}
                                 </select>
                                 <input
                                     type="number"
@@ -1968,39 +2327,40 @@ const AdminPage = () => {
             {/* Manual Order Modal */}
             {showManualOrder !== null && (
                 <div style={{ position: 'fixed', inset: 0, zIndex: 5000, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.8)', backdropFilter: 'blur(12px)', padding: '20px' }}>
-                    <div className="glass" style={{ width: '100%', maxWidth: '900px', height: '90vh', borderRadius: '32px', padding: '32px', display: 'flex', flexDirection: 'column' }}>
+                    <div className="glass modal-content" style={{ width: '100%', maxWidth: '900px', height: '90vh', borderRadius: '32px', padding: '32px', display: 'flex', flexDirection: 'column' }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
                             <h2 style={{ fontSize: '1.5rem', fontWeight: '800' }}>Manual Order — {showManualOrder === 0 ? 'Takeaway' : `Table ${showManualOrder}`}</h2>
-                            <button onClick={() => { setShowManualOrder(null); setManualCart([]); setManualSearch(''); setManualCategory('all'); }} style={{ background: 'var(--glass)', border: '1px solid var(--border-subtle)', width: '40px', height: '40px', borderRadius: '20px', color: 'white' }}>✕</button>
+                            <button onClick={() => { setShowManualOrder(null); setManualCart([]); setManualSearch(''); setManualCategory('all'); }} style={{ background: 'var(--glass)', border: '1px solid var(--border-subtle)', width: '40px', height: '40px', borderRadius: '20px', color: 'var(--text-main)' }}>✕</button>
                         </div>
 
                         <div style={{ flex: 1, display: 'flex', gap: '24px', overflow: 'hidden' }}>
                             {/* Menu Selection */}
                             <div style={{ flex: 2, display: 'flex', flexDirection: 'column', gap: '16px', overflowY: 'auto', paddingRight: '8px' }}>
                                 <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                                    <input
-                                        type="text"
-                                        placeholder="🔍 Search items by name..."
+                                    <input 
+                                        type="text" 
+                                        placeholder="🔍 Search items by name..." 
                                         value={manualSearch}
                                         onChange={(e) => setManualSearch(e.target.value)}
-                                        className="glass"
-                                        style={{ width: '100%', padding: '14px 20px', borderRadius: '16px', color: 'white', border: '1px solid var(--border-subtle)', outline: 'none' }}
+                                        className="glass" 
+                                        style={{ width: '100%', padding: '14px 20px', borderRadius: '16px', color: 'var(--text-main)', border: '1px solid var(--border-subtle)', outline: 'none' }}
                                     />
-                                    <div style={{ display: 'flex', gap: '8px', overflowX: 'auto', paddingBottom: '8px', msOverflowStyle: 'none', scrollbarWidth: 'none' }}>
+                                    <div style={{ display: 'flex', gap: '8px', overflowX: 'auto', padding: '12px 0', scrollbarWidth: 'none' }}>
                                         {['all', ...categories.map(c => c.name)].map(catName => (
-                                            <button
-                                                key={catName}
+                                            <button 
+                                                key={catName} 
                                                 onClick={() => setManualCategory(catName)}
-                                                style={{
-                                                    padding: '8px 20px',
-                                                    backgroundColor: manualCategory === catName ? 'var(--accent-white)' : 'var(--glass)',
-                                                    color: manualCategory === catName ? 'var(--bg-dark)' : 'white',
-                                                    border: '1px solid var(--border-subtle)',
-                                                    borderRadius: '20px',
-                                                    fontSize: '0.8rem',
+                                                style={{ 
+                                                    padding: '10px 24px', 
+                                                    backgroundColor: manualCategory === catName ? 'var(--accent-white)' : 'var(--glass)', 
+                                                    color: manualCategory === catName ? 'var(--bg-dark)' : 'var(--text-main)', 
+                                                    border: '1px solid var(--border-subtle)', 
+                                                    borderRadius: '24px', 
+                                                    fontSize: '0.85rem', 
                                                     fontWeight: '700',
                                                     whiteSpace: 'nowrap',
-                                                    transition: 'all 0.2s'
+                                                    transition: 'all 0.2s',
+                                                    minWidth: 'fit-content'
                                                 }}
                                             >
                                                 {catName.toUpperCase()}
@@ -2014,8 +2374,8 @@ const AdminPage = () => {
                                         .filter(i => manualCategory === 'all' || i.category === manualCategory)
                                         .filter(i => i.name.toLowerCase().includes(manualSearch.toLowerCase()))
                                         .map(item => (
-                                            <div
-                                                key={item.id}
+                                            <div 
+                                                key={item.id} 
                                                 onClick={() => {
                                                     const existing = manualCart.find(i => i.id === item.id);
                                                     if (existing) {
@@ -2024,7 +2384,7 @@ const AdminPage = () => {
                                                         setManualCart(prev => [...prev, { ...item, qty: 1 }]);
                                                     }
                                                 }}
-                                                className="glass"
+                                                className="glass" 
                                                 style={{ padding: '12px', borderRadius: '20px', textAlign: 'center', cursor: 'pointer' }}
                                             >
                                                 <div style={{ width: '100%', aspectRatio: '1', borderRadius: '12px', backgroundColor: 'rgba(255,255,255,0.05)', marginBottom: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
@@ -2046,20 +2406,21 @@ const AdminPage = () => {
                                         <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                                             <div style={{ flex: 1 }}>
                                                 <p style={{ fontSize: '0.9rem', fontWeight: '600' }}>{item.name}</p>
-                                                <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>{item.qty} x ₹{item.price}</p>
+                                                <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>₹{item.price * item.qty}</p>
                                             </div>
-                                            <div style={{ display: 'flex', gap: '8px' }}>
-                                                <button
+                                            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                                                <button 
                                                     onClick={() => {
                                                         setManualCart(prev => prev.map(i => i.id === item.id ? { ...i, qty: Math.max(0, i.qty - 1) } : i).filter(i => i.qty > 0));
                                                     }}
-                                                    style={{ width: '24px', height: '24px', borderRadius: '12px', border: '1px solid var(--border-subtle)', color: 'white' }}
+                                                    style={{ width: '30px', height: '30px', borderRadius: '15px', border: 'none', backgroundColor: '#f87171', color: 'white', fontWeight: 'bold', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
                                                 >-</button>
-                                                <button
+                                                <span style={{ fontWeight: '700', minWidth: '20px', textAlign: 'center' }}>{item.qty}</span>
+                                                <button 
                                                     onClick={() => {
                                                         setManualCart(prev => prev.map(i => i.id === item.id ? { ...i, qty: i.qty + 1 } : i));
                                                     }}
-                                                    style={{ width: '24px', height: '24px', borderRadius: '12px', border: '1px solid var(--border-subtle)', color: 'white' }}
+                                                    style={{ width: '30px', height: '30px', borderRadius: '15px', border: 'none', backgroundColor: '#4ade80', color: '#000', fontWeight: 'bold', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
                                                 >+</button>
                                             </div>
                                         </div>
@@ -2070,7 +2431,7 @@ const AdminPage = () => {
                                         <span>Total</span>
                                         <span>₹{manualCart.reduce((acc, curr) => acc + (curr.price * curr.qty), 0)}</span>
                                     </div>
-                                    <button
+                                    <button 
                                         onClick={() => {
                                             if (manualCart.length === 0) return;
                                             placeManualOrder(showManualOrder, manualCart);
@@ -2089,9 +2450,9 @@ const AdminPage = () => {
             {/* Edit Menu Item Modal */}
             {editItem && (
                 <div style={{ position: 'fixed', inset: 0, zIndex: 6000, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.8)', backdropFilter: 'blur(12px)', padding: '20px' }}>
-                    <div className="glass" style={{ width: '100%', maxWidth: '500px', borderRadius: '32px', padding: '32px' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
-                            <h2 style={{ fontSize: '1.4rem', fontWeight: '800' }}>Edit Item: {editItem.name}</h2>
+                        <div className="glass modal-content" style={{ width: '100%', maxWidth: '500px', borderRadius: '32px', padding: '32px' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px', flexWrap: 'wrap', gap: '8px' }}>
+                                <h2 style={{ fontSize: '1.2rem', fontWeight: '800' }}>Edit Item: {editItem.name}</h2>
                             <button onClick={() => setEditItem(null)} style={{ background: 'var(--glass)', border: '1px solid var(--border-subtle)', width: '36px', height: '36px', borderRadius: '18px', color: 'white' }}>✕</button>
                         </div>
 
@@ -2100,7 +2461,7 @@ const AdminPage = () => {
                             const formData = new FormData(e.target);
                             const imageFile = formData.get('image');
                             let image_url = editItem.image_url;
-
+                            
                             if (imageFile && imageFile.size > 0) {
                                 image_url = await handleImageUpload(imageFile);
                             }
@@ -2127,7 +2488,7 @@ const AdminPage = () => {
                             <div style={{ display: 'flex', gap: '12px' }}>
                                 <input name="price" type="number" defaultValue={editItem.price} placeholder="Price" required className="glass" style={{ flex: 1, padding: '14px', borderRadius: '14px', color: 'var(--text-main)' }} />
                                 <select name="category" defaultValue={editItem.category} className="glass" style={{ flex: 1, padding: '14px', borderRadius: '14px', color: 'var(--text-main)', appearance: 'none' }}>
-                                    {categories.map(cat => <option key={cat.id} value={cat.name} style={{ color: 'black' }}>{cat.name}</option>)}
+                                    {categories.map(cat => <option key={cat.id} value={cat.name} style={{ color: '#000' }}>{cat.name}</option>)}
                                 </select>
                             </div>
                             <textarea name="description" defaultValue={editItem.description} placeholder="Description" className="glass" style={{ padding: '14px', borderRadius: '14px', color: 'var(--text-main)', minHeight: '80px' }} />
@@ -2149,9 +2510,9 @@ const AdminPage = () => {
             {/* Edit Category Modal */}
             {editCategory && (
                 <div style={{ position: 'fixed', inset: 0, zIndex: 6000, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.8)', backdropFilter: 'blur(12px)', padding: '20px' }}>
-                    <div className="glass" style={{ width: '100%', maxWidth: '500px', borderRadius: '32px', padding: '32px' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
-                            <h2 style={{ fontSize: '1.4rem', fontWeight: '800' }}>Edit Category: {editCategory.name}</h2>
+                        <div className="glass modal-content" style={{ width: '100%', maxWidth: '500px', borderRadius: '32px', padding: '32px' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px', flexWrap: 'wrap', gap: '8px' }}>
+                                <h2 style={{ fontSize: '1.2rem', fontWeight: '800' }}>Edit Category: {editCategory.name}</h2>
                             <button onClick={() => setEditCategory(null)} style={{ background: 'var(--glass)', border: '1px solid var(--border-subtle)', width: '36px', height: '36px', borderRadius: '18px', color: 'white' }}>✕</button>
                         </div>
 
@@ -2160,7 +2521,7 @@ const AdminPage = () => {
                             const formData = new FormData(e.target);
                             const imageFile = formData.get('image');
                             let image_url = editCategory.image_url;
-
+                            
                             if (imageFile && imageFile.size > 0) {
                                 image_url = await handleImageUpload(imageFile);
                             }
@@ -2191,6 +2552,66 @@ const AdminPage = () => {
                                 {isUploading ? 'Uploading...' : 'Save Category Changes'}
                             </button>
                         </form>
+                    </div>
+                </div>
+            )}
+
+            {/* Transfer Table Modal */}
+            {showTransferModal && (
+                <div style={{ position: 'fixed', inset: 0, zIndex: 6000, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.8)', backdropFilter: 'blur(12px)', padding: '20px' }}>
+                        <div className="glass modal-content" style={{ width: '100%', maxWidth: '400px', borderRadius: '32px', padding: '32px' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px', flexWrap: 'wrap', gap: '8px' }}>
+                                <h2 style={{ fontSize: '1.2rem', fontWeight: '800' }}>Transfer Table {showTransferModal.table_id}</h2>
+                            <button onClick={() => setShowTransferModal(null)} style={{ background: 'var(--glass)', border: '1px solid var(--border-subtle)', width: '36px', height: '36px', borderRadius: '18px', color: 'white' }}>✕</button>
+                        </div>
+                        <p style={{ color: 'var(--text-muted)', marginBottom: '16px' }}>Select an available table to transfer to:</p>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', maxHeight: '300px', overflowY: 'auto' }}>
+                            {tables.filter(t => t.is_free && t.id !== showTransferModal.table_id).map(t => (
+                                <button
+                                    key={t.id}
+                                    onClick={() => {
+                                        transferOrderToTable(showTransferModal.id, showTransferModal.table_id, t.id);
+                                        setShowTransferModal(null);
+                                    }}
+                                    style={{ flex: '1 1 calc(33.333% - 12px)', padding: '16px', borderRadius: '16px', backgroundColor: 'var(--glass)', border: '1px solid var(--border-subtle)', color: 'var(--text-main)', fontWeight: '700', fontSize: '1.2rem', cursor: 'pointer' }}
+                                >
+                                    T-{t.id}
+                                </button>
+                            ))}
+                            {tables.filter(t => t.is_free && t.id !== showTransferModal.table_id).length === 0 && (
+                                <div style={{ width: '100%', textAlign: 'center', color: 'var(--text-muted)', padding: '24px 0' }}>No free tables available</div>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Combine Table Modal */}
+            {showCombineModal && (
+                <div style={{ position: 'fixed', inset: 0, zIndex: 6000, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.8)', backdropFilter: 'blur(12px)', padding: '20px' }}>
+                        <div className="glass modal-content" style={{ width: '100%', maxWidth: '400px', borderRadius: '32px', padding: '32px' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px', flexWrap: 'wrap', gap: '8px' }}>
+                                <h2 style={{ fontSize: '1.2rem', fontWeight: '800' }}>Combine to Table {showCombineModal.table_id}</h2>
+                            <button onClick={() => setShowCombineModal(null)} style={{ background: 'var(--glass)', border: '1px solid var(--border-subtle)', width: '36px', height: '36px', borderRadius: '18px', color: 'white' }}>✕</button>
+                        </div>
+                        <p style={{ color: 'var(--text-muted)', marginBottom: '16px' }}>Select another table to combine onto Table {showCombineModal.table_id}:</p>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', maxHeight: '300px', overflowY: 'auto', paddingBottom: '12px' }}>
+                            {tables.filter(t => t.id !== showCombineModal.table_id).map(t => {
+                                const isOccupied = !t.is_free;
+                                return (
+                                <button
+                                    key={t.id}
+                                    onClick={() => {
+                                        combineTableWith(showCombineModal.table_id, t.id);
+                                        setShowCombineModal(null);
+                                    }}
+                                    style={{ flex: '1 1 calc(33.333% - 12px)', padding: '16px', borderRadius: '16px', backgroundColor: isOccupied ? 'var(--accent-white)' : 'var(--glass)', border: '1px solid var(--border-subtle)', color: isOccupied ? 'var(--bg-dark)' : 'var(--text-main)', fontWeight: '700', fontSize: '1.2rem', cursor: 'pointer' }}
+                                >
+                                    T-{t.id}
+                                </button>
+                                );
+                            })}
+                        </div>
                     </div>
                 </div>
             )}

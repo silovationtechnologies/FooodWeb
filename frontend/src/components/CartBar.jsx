@@ -20,10 +20,7 @@ const CartBar = ({ count, total, onPlaceOrder, loading }) => {
                         fontSize: '1.5rem',
                         fontWeight: '800',
                         letterSpacing: '-0.04em',
-                        background: 'linear-gradient(135deg, #fff 0%, #c8c8e8 100%)',
-                        WebkitBackgroundClip: 'text',
-                        WebkitTextFillColor: 'transparent',
-                        backgroundClip: 'text',
+                        color: '#fff',
                         lineHeight: 1,
                     }}>
                         ₹{total}

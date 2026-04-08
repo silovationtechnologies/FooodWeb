@@ -51,7 +51,7 @@ const LoginPage = () => {
             justifyContent: 'center',
             background: 'var(--bg-dark)',
             padding: '24px',
-            backgroundImage: 'radial-gradient(ellipse 80% 60% at 50% -20%, rgba(120,100,200,0.18) 0%, transparent 70%)',
+            backgroundImage: 'radial-gradient(ellipse 80% 60% at 50% -20%, rgba(0,97,255,0.08) 0%, transparent 70%)',
         }}>
             <div className="login-card animate-fade" style={{
                 width: '100%',
@@ -65,41 +65,37 @@ const LoginPage = () => {
                         width: '56px',
                         height: '56px',
                         borderRadius: '18px',
-                        background: 'linear-gradient(135deg, #fff 0%, #c8c8e8 100%)',
+                        background: 'linear-gradient(135deg, var(--bg-card) 0%, var(--bg-raised) 100%)',
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'center',
                         fontSize: '1.5rem',
                         margin: '0 auto 20px',
-                        boxShadow: '0 8px 24px rgba(0,0,0,0.7), 0 0 0 1px rgba(255,255,255,0.4), inset 0 2px 0 rgba(255,255,255,1)',
+                        boxShadow: 'var(--shadow-md), 0 0 0 1px var(--border-subtle)',
                     }}>🍜</div>
                     <h1 style={{
                         fontSize: '2.2rem',
                         fontWeight: '800',
                         marginBottom: '6px',
                         letterSpacing: '-0.05em',
-                        background: 'linear-gradient(135deg, #fff 0%, #a0a0c0 100%)',
-                        WebkitBackgroundClip: 'text',
-                        WebkitTextFillColor: 'transparent',
-                        backgroundClip: 'text',
+                        color: 'var(--text-main)'
                     }}>
-                        fooodweb
+                        fooodweb.com
                     </h1>
                     <p style={{ color: 'var(--text-faint)', fontSize: '0.88rem', letterSpacing: '0.04em', fontWeight: '600', textTransform: 'uppercase' }}>Admin Portal</p>
                 </div>
 
                 {error && (
                     <div style={{
-                        background: 'rgba(248,113,113,0.08)',
-                        color: '#fca5a5',
+                        background: 'rgba(239,68,68,0.1)',
+                        color: '#ef4444',
                         padding: '14px 16px',
                         borderRadius: '12px',
                         marginBottom: '24px',
                         fontSize: '0.88rem',
-                        border: '1px solid rgba(248,113,113,0.2)',
+                        border: '1px solid rgba(239,68,68,0.2)',
                         textAlign: 'left',
                         lineHeight: '1.5',
-                        boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.05)',
                     }}>
                         ⚠ {error}
                     </div>

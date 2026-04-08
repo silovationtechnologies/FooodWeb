@@ -16,8 +16,8 @@ const MenuPage = () => {
     const [displayOrderId, setDisplayOrderId] = useState(null);
     const [showThankYou, setShowThankYou] = useState(false);
     const [showReview, setShowReview] = useState(false);
-    const [isParcelOrder, setIsParcelOrder] = useState(false);
-    const [lastOrderItems, setLastOrderItems] = useState([]); // Store placed order items for success screen
+    const [isParcelOrder, setIsParcelOrder] = useState(false); 
+    const [lastOrderedItems, setLastOrderedItems] = useState([]);
     const wasOccupied = useRef(false);
 
     const location = useLocation();
@@ -164,26 +164,34 @@ const MenuPage = () => {
         try {
             const cartItems = Object.values(cart);
             const cartTotal = cartItems.reduce((acc, curr) => acc + (curr.price * curr.qty), 0);
+            let finalOrderItems = [];
 
-            // Check for existing active order for this table
             // Only pure parcel QR scans have tableId === '0'. 
-            const effectiveTableId = parseInt(tableId); // Strict adherence to scanned table
+            const scannedTableId = parseInt(tableId);
 
-            // Fetch all active orders to check if this table is combined with another
-            const { data: activeOrders, error: fetchError } = await supabase
-                .from('orders')
-                .select('*')
-                .neq('status', 'paid')
-                .neq('status', 'rejected');
-
-            if (fetchError && fetchError.code !== 'PGRST116') throw fetchError;
-
+            // Loop to traverse linked tables (max depth 5 to prevent infinite loops)
+            let effectiveTableId = scannedTableId;
             let existingOrder = null;
-            if (activeOrders) {
-                existingOrder = activeOrders.find(o => 
-                    o.table_id === effectiveTableId || 
-                    (o.items && o.items.some(i => i.type === 'COMBINED' && i.tableId === effectiveTableId))
-                );
+            let traverseDepth = 0;
+
+            while (traverseDepth < 5) {
+                const { data: orderData, error: fetchError } = await supabase
+                    .from('orders')
+                    .select('*')
+                    .eq('table_id', effectiveTableId)
+                    .neq('status', 'paid')
+                    .neq('status', 'rejected')
+                    .maybeSingle();
+
+                if (fetchError && fetchError.code !== 'PGRST116') throw fetchError;
+
+                if (orderData && orderData.items?.length === 1 && orderData.items[0].type === 'LINK') {
+                    effectiveTableId = orderData.items[0].targetTable;
+                    traverseDepth++;
+                } else {
+                    existingOrder = orderData;
+                    break;
+                }
             }
 
             if (existingOrder) {
@@ -220,6 +228,7 @@ const MenuPage = () => {
                     .eq('id', existingOrder.id);
 
                 if (updateError) throw updateError;
+                finalOrderItems = updatedItems;
             } else {
                 // Insert brand new order
                 let finalItems = cartItems.map(i => ({ 
@@ -262,9 +271,10 @@ const MenuPage = () => {
                         setDisplayOrderId(newOrderData.id);
                     }
                 }
+                finalOrderItems = finalItems;
             }
 
-            setLastOrderItems(cartItemsArray); // Save items before clearing
+            setLastOrderedItems(finalOrderItems);
             setOrderStatus('success');
             setCart({});
         } catch (err) {
@@ -288,11 +298,11 @@ const MenuPage = () => {
         return (
             <div className="container animate-fade" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center', minHeight: '100vh', padding: '24px' }}>
                 <div style={{ width: '100px', height: '100px', borderRadius: '50%', backgroundColor: 'var(--accent-white)', color: 'var(--bg-dark)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '50px', marginBottom: '40px', boxShadow: '0 12px 48px rgba(255,255,255,0.3)' }}>
-                    Γ£¿
+                    ✨
                 </div>
                 <h1 style={{ fontSize: '3rem', marginBottom: '16px', fontWeight: '700', letterSpacing: '-0.04em', lineHeight: '1.2' }}>Thank You.</h1>
                 <p style={{ color: 'var(--text-muted)', marginBottom: '48px', fontSize: '1.2rem', maxWidth: '300px', lineHeight: '1.5' }}>
-                    We hope you enjoyed your time at fooodweb.
+                    We hope you enjoyed your time at fooodweb.com.
                 </p>
                 <div className="glass" style={{ padding: '32px', borderRadius: '24px', width: '100%', maxWidth: '400px', border: '1px solid var(--border-subtle)' }}>
                     <p style={{ fontSize: '1rem', color: 'var(--text-main)', letterSpacing: '0.02em', fontWeight: '500' }}>Please visit us again!</p>
@@ -302,45 +312,95 @@ const MenuPage = () => {
     }
 
     if (orderStatus === 'success') {
-        const orderTotal = lastOrderItems.reduce((acc, i) => acc + (i.price * i.qty), 0);
+        const orderTotal = lastOrderedItems.reduce((acc, curr) => acc + (curr.price * (curr.qty || 0)), 0);
         return (
-            <div className="animate-fade" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center', minHeight: '100vh', padding: '24px', background: 'var(--bg-dark)' }}>
-                <div className="success-checkmark animate-float">✔</div>
-                <h1 style={{ fontSize: '2.8rem', marginBottom: '12px', fontWeight: '800', letterSpacing: '-0.05em', background: 'linear-gradient(135deg, #fff 0%, #a0a0c0 100%)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
+            <div className="animate-fade" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-start', textAlign: 'center', minHeight: '100vh', padding: '40px 24px', background: 'var(--bg-dark)', overflowY: 'auto' }}>
+                <div className="success-checkmark animate-float" style={{ marginBottom: '24px' }}>✓</div>
+                <h1 style={{ fontSize: '2.4rem', marginBottom: '8px', fontWeight: '800', letterSpacing: '-0.05em', color: 'var(--text-main)' }}>
                     Order Placed.
                 </h1>
-                <p style={{ color: 'var(--text-muted)', fontSize: '1.1rem', marginBottom: '32px', lineHeight: '1.6', fontWeight: '500', maxWidth: '280px' }}>
+                <p style={{ color: 'var(--text-muted)', fontSize: '1rem', marginBottom: '32px', lineHeight: '1.4', fontWeight: '500', maxWidth: '280px' }}>
                     {isTakeaway
                         ? `Your order #${displayOrderId} is being prepared.`
                         : `Table ${tableId} — we're on it.`}
                 </p>
 
-                {/* Order Summary */}
-                {lastOrderItems.length > 0 && (
-                    <div className="glass" style={{ width: '100%', maxWidth: '360px', borderRadius: '24px', padding: '24px', marginBottom: '24px', textAlign: 'left' }}>
-                        <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: '700', marginBottom: '16px' }}>Your Order</p>
-                        {lastOrderItems.map((item, i) => (
-                            <div key={i} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '10px', fontSize: '0.95rem' }}>
-                                <span style={{ color: 'var(--text-main)', fontWeight: '500' }}>{item.qty}× {item.name}</span>
-                                <span style={{ color: 'var(--text-muted)', fontWeight: '600' }}>₹{item.price * item.qty}</span>
+                {/* Order Summary Card */}
+                <div className="glass" style={{ 
+                    padding: '24px', 
+                    borderRadius: '28px', 
+                    width: '100%', 
+                    maxWidth: '360px', 
+                    marginBottom: '32px', 
+                    textAlign: 'left',
+                    border: '1px solid rgba(255,255,255,0.1)',
+                    background: 'rgba(255,255,255,0.03)'
+                }}>
+                    <h3 style={{ fontSize: '0.8rem', color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '0.1em', fontWeight: '700', marginBottom: '20px', borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '12px' }}>
+                        Order Summary
+                    </h3>
+                    
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', marginBottom: '24px' }}>
+                        {lastOrderedItems.filter(i => i.type !== 'METADATA' && i.type !== 'LINK').map((item, idx) => (
+                            <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                                <div style={{ display: 'flex', gap: '12px' }}>
+                                    <span style={{ 
+                                        minWidth: '24px', 
+                                        height: '24px', 
+                                        borderRadius: '6px', 
+                                        background: 'rgba(255,255,255,0.1)', 
+                                        display: 'flex', 
+                                        alignItems: 'center', 
+                                        justifyContent: 'center',
+                                        fontSize: '0.75rem',
+                                        fontWeight: '700',
+                                        color: 'var(--text-main)'
+                                    }}>
+                                        {item.qty}x
+                                    </span>
+                                    <div>
+                                        <p style={{ fontSize: '0.95rem', fontWeight: '600', color: 'var(--text-main)', lineHeight: 1.2 }}>{item.name}</p>
+                                        {item.isParcel && <span style={{ fontSize: '0.7rem', color: 'var(--accent-orange)', fontWeight: '700', textTransform: 'uppercase' }}>📦 Parcel</span>}
+                                    </div>
+                                </div>
+                                <span style={{ fontSize: '0.95rem', fontWeight: '600', color: 'var(--text-muted)' }}>₹{item.price * item.qty}</span>
                             </div>
                         ))}
-                        <div style={{ borderTop: '1px solid var(--border-subtle)', paddingTop: '12px', marginTop: '8px', display: 'flex', justifyContent: 'space-between', fontWeight: '800', fontSize: '1.1rem', color: 'var(--text-main)' }}>
-                            <span>Total</span>
-                            <span>₹{orderTotal}</span>
-                        </div>
                     </div>
-                )}
 
-                <div className="glass" style={{ padding: '28px 32px', borderRadius: '24px', width: '100%', maxWidth: '360px', marginBottom: '32px', borderTopColor: 'rgba(255,255,255,0.18)' }}>
-                    <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: '700', marginBottom: '8px' }}>Estimated Wait</p>
-                    <p style={{ fontSize: '2.4rem', fontWeight: '800', color: 'var(--text-main)', letterSpacing: '-0.04em', lineHeight: 1 }}>15–20</p>
-                    <p style={{ fontSize: '0.85rem', color: 'var(--text-faint)', fontWeight: '500', marginTop: '4px' }}>minutes</p>
+                    <div style={{ 
+                        display: 'flex', 
+                        justifyContent: 'space-between', 
+                        alignItems: 'center', 
+                        paddingTop: '20px', 
+                        borderTop: '2px dashed rgba(255,255,255,0.1)' 
+                    }}>
+                        <span style={{ fontSize: '1rem', fontWeight: '700', color: 'var(--text-main)' }}>Total Amount</span>
+                        <span style={{ fontSize: '1.4rem', fontWeight: '800', color: 'var(--text-main)' }}>₹{orderTotal}</span>
+                    </div>
+                </div>
+
+                <div className="glass" style={{ padding: '20px', borderRadius: '24px', width: '100%', maxWidth: '360px', marginBottom: '32px', border: '1px solid rgba(255,255,255,0.05)' }}>
+                    <p style={{ fontSize: '0.7rem', color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: '700', marginBottom: '4px' }}>Estimated Wait</p>
+                    <p style={{ fontSize: '1.8rem', fontWeight: '800', color: 'var(--text-main)', letterSpacing: '-0.02em', lineHeight: 1 }}>15–20 <span style={{ fontSize: '0.9rem', color: 'var(--text-faint)', fontWeight: '500' }}>mins</span></p>
                 </div>
 
                 <button
                     onClick={() => setOrderStatus(null)}
-                    style={{ padding: '14px 32px', background: 'linear-gradient(135deg, rgba(255,255,255,0.10) 0%, rgba(255,255,255,0.03) 100%)', border: '1px solid rgba(255,255,255,0.12)', borderTopColor: 'rgba(255,255,255,0.22)', color: 'var(--text-main)', borderRadius: '24px', fontSize: '1rem', fontWeight: '700', boxShadow: '0 4px 16px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.12)' }}
+                    style={{ 
+                        padding: '16px 40px', 
+                        background: 'var(--text-main)', 
+                        border: 'none',
+                        color: 'var(--bg-dark)', 
+                        borderRadius: '24px', 
+                        fontSize: '1rem', 
+                        fontWeight: '800', 
+                        boxShadow: '0 8px 32px rgba(255,255,255,0.15)',
+                        cursor: 'pointer',
+                        transition: 'transform 0.2s'
+                    }}
+                    onMouseDown={(e) => e.currentTarget.style.transform = 'scale(0.95)'}
+                    onMouseUp={(e) => e.currentTarget.style.transform = 'scale(1)'}
                 >
                     + Order More
                 </button>
@@ -355,9 +415,9 @@ const MenuPage = () => {
             <header style={{ marginBottom: '32px' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
                     <div>
-                        <h1 style={{ fontSize: '1.8rem', color: 'var(--text-main)', fontWeight: '800', letterSpacing: '-0.05em', lineHeight: 1 }}>fooodweb</h1>
-                        <p style={{ color: 'var(--text-muted)', fontSize: '0.88rem', fontWeight: '600', marginTop: '4px', letterSpacing: '0.02em' }}>
-                            {isTakeaway ? '≡ƒôª Parcel Order' : `≡ƒì╜∩╕Å Table ${tableId}`}
+                        <h1 style={{ fontSize: '1.8rem', color: '#fff', fontWeight: '800', letterSpacing: '-0.05em', lineHeight: 1 }}>fooodweb.com</h1>
+                        <p style={{ color: 'rgba(255,255,255,0.45)', fontSize: '0.88rem', fontWeight: '600', marginTop: '4px', letterSpacing: '0.02em' }}>
+                            {isTakeaway ? '📦 Parcel Order' : `🍽️ Table ${tableId}`}
                         </p>
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '6px 12px', borderRadius: '20px', background: 'rgba(74,222,128,0.08)', border: '1px solid rgba(74,222,128,0.15)' }}>
@@ -368,7 +428,7 @@ const MenuPage = () => {
 
                 <input
                     type="text"
-                    placeholder="≡ƒöì  Search menuΓÇª"
+                    placeholder="🔍  Search menu…"
                     value={search}
                     onChange={(e) => setSearch(e.target.value)}
                     style={{
@@ -376,6 +436,10 @@ const MenuPage = () => {
                         padding: '14px 18px',
                         fontSize: '0.95rem',
                         color: 'var(--text-main)',
+                        border: '1px solid var(--border-subtle)',
+                        background: 'var(--bg-card)',
+                        borderRadius: '16px',
+                        outline: 'none',
                         marginBottom: '4px',
                     }}
                 />
@@ -404,7 +468,9 @@ const MenuPage = () => {
                                 flexDirection: 'column',
                                 alignItems: 'center',
                                 gap: '10px',
-                                background: 'none',
+                                background: isActive
+                                ? `var(--accent-white)`
+                                : 'var(--text-main)',
                                 border: 'none',
                                 cursor: 'pointer',
                                 outline: 'none',
@@ -427,9 +493,15 @@ const MenuPage = () => {
                                 transition: 'all 0.3s'
                             }}>
                                 {cat.image_url ? (
-                                    <img src={cat.image_url} alt={cat.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                    <img 
+                                        src={cat.image_url} 
+                                        alt={cat.name} 
+                                        loading="lazy"
+                                        onLoad={(e) => e.target.style.opacity = 1}
+                                        style={{ width: '100%', height: '100%', objectFit: 'cover', opacity: 0, transition: 'opacity 0.3s' }} 
+                                    />
                                 ) : (
-                                    <span style={{ fontSize: '1.6rem', filter: isActive ? 'none' : 'grayscale(0.5)' }}>{cat.id === 'all' ? '≡ƒÅá' : '≡ƒì╜∩╕Å'}</span>
+                                    <span style={{ fontSize: '1.6rem', filter: isActive ? 'none' : 'grayscale(0.5)' }}>{cat.id === 'all' ? '🏠' : '🍽️'}</span>
                                 )}
                             </div>
                             <span className="cat-name-text" style={{ 
@@ -511,7 +583,7 @@ const MenuPage = () => {
                     }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '32px' }}>
                             <h2 style={{ fontSize: '1.5rem', fontWeight: '700', letterSpacing: '-0.02em', color: 'var(--text-main)' }}>Review Order</h2>
-                            <button onClick={() => setShowReview(false)} style={{ backgroundColor: 'var(--glass)', border: '1px solid var(--border-subtle)', width: '36px', height: '36px', borderRadius: '18px', fontSize: '1.2rem', color: 'var(--text-main)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>Γ£ò</button>
+                            <button onClick={() => setShowReview(false)} style={{ backgroundColor: 'var(--glass)', border: '1px solid var(--border-subtle)', width: '36px', height: '36px', borderRadius: '18px', fontSize: '1.2rem', color: 'var(--text-main)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>✕</button>
                         </div>
 
                         <div style={{ flex: 1, overflowY: 'auto', marginBottom: '24px', paddingRight: '12px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
@@ -519,7 +591,7 @@ const MenuPage = () => {
                                 <div key={item.id} className="premium-border" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                                     <div>
                                         <p style={{ fontSize: '1.1rem', fontWeight: '600', color: 'var(--text-main)', marginBottom: '4px' }}>{item.name}</p>
-                                        <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', fontWeight: '500' }}>Γé╣{item.price * item.qty}</p>
+                                        <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', fontWeight: '500' }}>₹{item.price * item.qty}</p>
                                     </div>
                                     <div style={{ display: 'flex', alignItems: 'center', gap: '12px', backgroundColor: 'var(--glass)', padding: '6px 12px', borderRadius: '20px', border: '1px solid var(--border-subtle)' }}>
                                         <button onClick={() => removeFromCart(item.id)} style={{ backgroundColor: 'transparent', color: 'var(--text-main)', fontSize: '1.2rem', padding: '4px 8px' }}>-</button>
@@ -550,7 +622,7 @@ const MenuPage = () => {
                             <>
                                 <div style={{ borderTop: '1px solid var(--border-subtle)', paddingTop: '24px', marginBottom: '32px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                                     <span style={{ fontSize: '1.2rem', color: 'var(--text-muted)', fontWeight: '500' }}>Total</span>
-                                    <span style={{ fontSize: '1.8rem', fontWeight: 'bold', color: 'var(--text-main)', letterSpacing: '-0.02em' }}>Γé╣{cartTotal}</span>
+                                    <span style={{ fontSize: '1.8rem', fontWeight: 'bold', color: 'var(--text-main)', letterSpacing: '-0.02em' }}>₹{cartTotal}</span>
                                 </div>
 
                                 <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
@@ -580,7 +652,7 @@ const MenuPage = () => {
                                                 justifyContent: 'center',
                                                 transition: 'all 0.2s'
                                             }}>
-                                                {isParcelOrder && <span style={{ color: 'white', fontSize: '14px' }}>Γ£ô</span>}
+                                                {isParcelOrder && <span style={{ color: 'white', fontSize: '14px' }}>✓</span>}
                                             </div>
                                             <div>
                                                 <p style={{ fontSize: '0.95rem', fontWeight: '700', color: 'var(--text-main)' }}>Pack as Parcel?</p>
@@ -639,9 +711,9 @@ const MenuPage = () => {
             {orderStatus === 'rejected' && (
                 <div className="animate-overlay" style={{ position: 'fixed', inset: 0, zIndex: 9999, background: 'rgba(0,0,0,0.8)', backdropFilter: 'blur(12px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px' }}>
                     <div className="glass animate-fade" style={{ width: '100%', maxWidth: '400px', borderRadius: '32px', padding: '40px', textAlign: 'center' }}>
-                        <h1 style={{ fontSize: '4rem', marginBottom: '16px' }}>Γ¥î</h1>
-                        <h2 style={{ fontSize: '1.8rem', fontWeight: '800', marginBottom: '12px', color: 'var(--text-main)', letterSpacing: '-0.02em' }}>Order Unavailable</h2>
-                        <p style={{ color: 'var(--text-muted)', marginBottom: '32px', fontSize: '0.95rem' }}>We are sorry, but some items in your order are currently out of stock. Your order has been cancelled.</p>
+                        <h1 style={{ fontSize: '4rem', marginBottom: '16px' }}>❌</h1>
+                        <h2 style={{ fontSize: '1.8rem', fontWeight: '800', marginBottom: '12px', color: 'var(--text-main)', letterSpacing: '-0.02em' }}>Currently can't take order</h2>
+                        <p style={{ color: 'var(--text-muted)', marginBottom: '32px', fontSize: '0.95rem' }}>We're not able to accept this order right now. Please try again in a bit or ask the staff for help.</p>
                         <button
                             onClick={() => {
                                 setOrderStatus(null);

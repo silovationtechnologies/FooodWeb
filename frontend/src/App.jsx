@@ -5,6 +5,7 @@ import QRPage from './pages/QRPage';
 import MenuPage from './pages/MenuPage';
 import AdminPage from './pages/AdminPage';
 import LoginPage from './pages/LoginPage';
+import DashboardPage from './pages/DashboardPage';
 
 function App() {
   const [session, setSession] = useState(null);
@@ -25,7 +26,14 @@ function App() {
 
   if (loading) {
     return (
-      <div style={{ height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#0f0f1a', color: 'white' }}>
+      <div style={{ 
+        height: '100vh', 
+        display: 'flex', 
+        alignItems: 'center', 
+        justifyContent: 'center', 
+        background: '#050507', 
+        color: 'white' 
+      }}>
         Loading...
       </div>
     );
@@ -41,6 +49,10 @@ function App() {
         <Route
           path="/admin"
           element={session ? <AdminPage /> : <Navigate to="/login" />}
+        />
+        <Route
+          path="/dashboard"
+          element={session ? <DashboardPage /> : <Navigate to="/login" />}
         />
       </Routes>
     </BrowserRouter>

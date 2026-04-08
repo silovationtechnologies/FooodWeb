@@ -33,86 +33,130 @@ const BulkQRModal = ({ tables, isOpen, onClose, qrBaseUrl }) => {
 
             <div id="bulk-qr-container" style={{ 
                 flex: 1, overflowY: 'auto', 
-                display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', 
+                display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', 
                 gap: '40px', padding: '20px', maxWidth: '1200px', margin: '0 auto', width: '100%' 
             }}>
                 {tables.map(table => (
-                    <div key={table.id} className="qr-card-premium" style={{
+                    <div key={table.id} className="qr-print-card" style={{
+                        width: '320px',
+                        height: '480px',
+                        backgroundColor: '#26817B',
                         position: 'relative',
-                        width: '100%',
-                        paddingBottom: '150%', // Enforce 2:3 aspect ratio without overlap
-                        boxShadow: '0 10px 40px rgba(0,0,0,0.5)',
                         overflow: 'hidden',
-                        backgroundColor: 'var(--bg-dark)',
-                        background: 'linear-gradient(145deg, #0f172a 0%, #020617 100%)',
-                        fontSize: '16px' // Base font size
+                        fontFamily: 'sans-serif',
+                        boxShadow: '0 10px 30px rgba(0,0,0,0.3)',
+                        padding: '16px',
+                        boxSizing: 'border-box'
                     }}>
-                        <div className="qr-card-content" style={{
-                            position: 'absolute', inset: 0,
-                            display: 'flex', flexDirection: 'column', alignItems: 'center',
-                            justifyContent: 'space-between', padding: '13% 10%', boxSizing: 'border-box'
+                        <div style={{
+                            width: '100%',
+                            height: '100%',
+                            border: '2px solid #E3C565',
+                            borderRadius: '6px',
+                            boxSizing: 'border-box',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            alignItems: 'center',
+                            padding: '16px 12px',
+                            justifyContent: 'space-between'
                         }}>
-                            {/* Inner Gold Border */}
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+                                <img src="/fooodweb-logo.jpeg" alt="logo" style={{ width: '36px', height: '36px', objectFit: 'cover', borderRadius: '50%', border: '2px solid #E3C565' }} />
+                                <h2 style={{ 
+                                    margin: 0, 
+                                    color: '#E3C565', 
+                                    fontFamily: 'serif', 
+                                    fontSize: '1.6rem', 
+                                    letterSpacing: '0.08em',
+                                    textShadow: '2px 2px 4px rgba(0,0,0,0.5)',
+                                    fontWeight: '800'
+                                }}>FOOODWEB</h2>
+                            </div>
+                            
                             <div style={{
-                                position: 'absolute', top: '4%', right: '4%', bottom: '4%', left: '4%',
-                                border: '3px solid var(--primary)', pointerEvents: 'none', zIndex: 0
-                            }} />
-
-                            {/* Noise / Texture Overlay */}
-                            <div style={{
-                                position: 'absolute', inset: 0, zIndex: 0, opacity: 0.1,
-                                backgroundImage: 'url("data:image/svg+xml,%3Csvg viewBox=%220 0 200 200%22 xmlns=%22http://www.w3.org/2000/svg%22%3E%3Cfilter id=%22noiseFilter%22%3E%3CfeTurbulence type=%22fractalNoise%22 baseFrequency=%220.65%22 numOctaves=%223%22 stitchTiles=%22stitch%22/%3E%3C/filter%3E%3Crect width=%22100%25%22 height=%22100%25%22 filter=%22url(%23noiseFilter)%22/%3E%3C/svg%3E")'
-                            }} />
-
-                            <h1 style={{
-                                color: 'var(--primary)', fontFamily: '"Times New Roman", Times, serif',
-                                fontSize: '180%', fontWeight: 'bold', letterSpacing: '2px',
-                                margin: '0', textShadow: '2px 2px 4px rgba(0,0,0,0.5)',
-                                zIndex: 1, textAlign: 'center'
-                            }}>FOOOD WEB</h1>
-
-                            <div style={{
-                                width: '58%', aspectRatio: '1', backgroundColor: '#ffffff',
-                                borderRadius: '16px', border: '4px solid var(--primary)',
-                                boxShadow: '0 8px 16px rgba(0,0,0,0.4)', zIndex: 1,
-                                display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-                                padding: '5%', boxSizing: 'border-box'
+                                backgroundColor: 'white',
+                                borderRadius: '16px',
+                                border: '4px solid #E3C565',
+                                padding: '16px',
+                                display: 'flex',
+                                flexDirection: 'column',
+                                alignItems: 'center',
+                                boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
+                                marginBottom: '8px',
+                                width: '180px',
+                                height: '180px',
+                                justifyContent: 'center',
+                                boxSizing: 'content-box'
                             }}>
                                 <QRCodeSVG
-                                    value={`${qrBaseUrl.replace(/\/$/, '')}/menu?table=${table.id}`}
-                                    size={256}
-                                    style={{ width: '100%', height: 'calc(100% - 14px)' }}
-                                    level="H" fgColor="#000000" includeMargin={false}
+                                    value={`${qrBaseUrl.startsWith('http') ? '' : window.location.protocol + '//'}${qrBaseUrl.replace(/\/$/, '')}/menu?table=${table.id}&tk=${table.isTakeaway ? '1' : '0'}`}
+                                    size={150}
+                                    style={{ width: '150px', height: '150px', marginBottom: '8px' }}
+                                    bgColor="#ffffff"
+                                    fgColor="#000000"
+                                    level="H"
+                                    includeMargin={false}
                                 />
-                                <div style={{ fontSize: '75%', fontWeight: '900', color: '#000', marginTop: '4%', textAlign: 'center', fontFamily: 'sans-serif' }}>
+                                <div style={{ fontSize: '1.1rem', fontWeight: '900', color: '#000', textAlign: 'center', fontFamily: 'sans-serif', letterSpacing: '0.05em' }}>
                                     {table.id === 0 ? 'PARCEL' : `TABLE ${table.id}`}
                                 </div>
                             </div>
 
-                            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: '100%', gap: '8px', zIndex: 1 }}>
-                                <div style={{
-                                    color: 'var(--primary)', fontFamily: '"Brush Script MT", "Great Vibes", cursive',
-                                    fontSize: '200%', textShadow: '1px 1px 2px rgba(0,0,0,0.5)',
-                                    textAlign: 'center', fontStyle: 'italic'
-                                }}>Scan to Order</div>
-
-                                <div style={{ width: '70%', height: '1.5px', backgroundColor: 'var(--primary)', boxShadow: '0 1px 2px rgba(0,0,0,0.3)' }} />
-
-                                <div style={{
-                                    color: 'var(--primary)', fontFamily: '"Times New Roman", Times, serif',
-                                    fontSize: '110%', letterSpacing: '1px', textAlign: 'center'
-                                }}>www.fooodweb.com</div>
+                            <div style={{ textAlign: 'center', width: '100%', marginBottom: '8px' }}>
+                                <h3 style={{
+                                    margin: '0 0 6px 0',
+                                    color: '#E3C565',
+                                    fontFamily: '"Brush Script MT", cursive',
+                                    fontSize: '2rem',
+                                    fontWeight: '500',
+                                    textShadow: '1px 1px 3px rgba(0,0,0,0.3)',
+                                    fontStyle: 'italic',
+                                    lineHeight: 1
+                                }}>Scan to Order</h3>
+                                
+                                <div style={{ width: '100px', height: '1.5px', backgroundColor: '#E3C565', margin: '0 auto 8px auto', opacity: 0.9 }}></div>
+                                
+                                <p style={{
+                                    margin: '0',
+                                    color: '#E3C565',
+                                    fontFamily: 'serif',
+                                    fontSize: '1rem',
+                                    letterSpacing: '0.05em',
+                                    fontWeight: '600'
+                                }}>www.fooodweb.com</p>
                             </div>
 
-                            <div style={{
-                                color: 'var(--primary)', fontFamily: 'sans-serif',
-                                fontSize: '60%', letterSpacing: '0.08em', zIndex: 1,
-                                textAlign: 'center', fontWeight: 'bold', lineHeight: '1.4'
-                            }}>
-                                <div>FOOOD WEB</div>
-                                <div style={{ opacity: 0.9 }}>POWERED BY SILOVATION TECHNOLOGIES</div>
+                            <div style={{ textAlign: 'center', width: '100%' }}>
+                                <p style={{ margin: '0 0 2px 0', color: '#E3C565', fontSize: '0.75rem', fontWeight: '800', letterSpacing: '0.1em' }}>FOOODWEB</p>
+                                <p style={{ margin: 0, color: '#E3C565', fontSize: '0.55rem', fontWeight: '800', letterSpacing: '0.05em', opacity: 0.9 }}>POWERED BY SILOVATION TECHNOLOGIES</p>
                             </div>
                         </div>
+                        <button 
+                            className="no-print"
+                            onClick={() => {
+                                const urlPrefix = qrBaseUrl.startsWith('http') ? qrBaseUrl : `${window.location.protocol}//${qrBaseUrl}`;
+                                window.open(`${urlPrefix.replace(/\/$/, '')}/menu?table=${table.id}&tk=${table.isTakeaway ? '1' : '0'}`, '_blank');
+                            }}
+                            style={{
+                                position: 'absolute',
+                                bottom: '10px',
+                                left: '50%',
+                                transform: 'translateX(-50%)',
+                                padding: '8px 16px',
+                                backgroundColor: 'rgba(255,255,255,0.9)',
+                                border: 'none',
+                                borderRadius: '20px',
+                                fontSize: '0.75rem',
+                                fontWeight: '800',
+                                color: '#26817B',
+                                cursor: 'pointer',
+                                boxShadow: '0 4px 12px rgba(0,0,0,0.2)',
+                                zIndex: 10,
+                                whiteSpace: 'nowrap'
+                            }}
+                        >
+                            🔗 Test Link
+                        </button>
                     </div>
                 ))}
             </div>

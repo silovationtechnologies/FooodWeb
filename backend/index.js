@@ -9,7 +9,7 @@ app.use(cors());
 app.use(express.json());
 
 app.get('/api/health', (req, res) => {
-    res.json({ status: 'fooodweb Backend is running!' });
+    res.json({ status: 'FooodWeb Backend is running!' });
 });
 
 app.listen(PORT, () => {

@@ -122,7 +122,7 @@ const InvoiceModal = ({ order, isOpen, onClose, onPaid }) => {
                 </button>
 
                 <div style={{ textAlign: 'center', marginBottom: '40px' }}>
-                    <h1 style={{ fontSize: '1.8rem', marginBottom: '4px', letterSpacing: '-0.03em', fontWeight: '700' }}>fooodweb</h1>
+                    <h1 style={{ fontSize: '1.8rem', marginBottom: '4px', letterSpacing: '-0.03em', fontWeight: '700' }}>fooodweb.com</h1>
                     <p style={{ color: '#888', fontSize: '0.85rem', letterSpacing: '0.05em' }}>PREMIUM DINING</p>
                 </div>
 
