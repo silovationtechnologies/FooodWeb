@@ -1,7 +1,26 @@
 import React from 'react';
 
-const OrderPopup = ({ order, onAccept, onDismiss, onUpdateItemQty }) => {
+const OrderPopup = ({ order, onAccept, onDismiss, onUpdateItemQty, currentTime }) => {
     if (!order) return null;
+
+    const getDuration = (createdAt) => {
+        const start = new Date(createdAt).getTime();
+        const diff = Math.max(0, (currentTime || Date.now()) - start);
+        const secs = Math.floor(diff / 1000);
+        const h = Math.floor(secs / 3600);
+        const m = Math.floor((secs % 3600) / 60);
+        const s = secs % 60;
+        return `${h > 0 ? h.toString().padStart(2, '0') + ':' : ''}${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+    };
+
+    const getDurationColor = (createdAt) => {
+        const diff = (currentTime || Date.now()) - new Date(createdAt).getTime();
+        const mins = diff / 60000;
+        if (mins > 45) return 'timer-red';
+        if (mins > 30) return 'timer-orange';
+        if (mins > 15) return 'timer-yellow';
+        return 'timer-green';
+    };
 
     return (
         <div className="order-popup-overlay animate-overlay" style={{
@@ -31,34 +50,53 @@ const OrderPopup = ({ order, onAccept, onDismiss, onUpdateItemQty }) => {
                 boxShadow: '0 24px 48px rgba(0,0,0,0.5), 0 0 0 1px var(--border-subtle)'
             }}>
                 <div style={{
-                    padding: '20px 24px',
+                    padding: '24px',
                     borderBottom: '1px solid var(--border-subtle)',
                     display: 'flex',
                     alignItems: 'center',
+                    justifyContent: 'space-between',
                     gap: '12px'
                 }}>
-                    <span style={{ fontSize: '24px' }}>🔔</span>
-                    <h2 style={{ fontSize: '1.25rem', color: 'var(--text-main)', letterSpacing: '-0.02em', fontWeight: '600' }}>New Order</h2>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                        <span style={{ fontSize: '24px' }}>🔔</span>
+                        <h2 style={{ fontSize: '1.25rem', color: 'var(--text-main)', letterSpacing: '-0.02em', fontWeight: '800', margin: 0 }}>New Order Alert</h2>
+                    </div>
+                    <div className={getDurationColor(order.created_at)} style={{ 
+                        fontSize: '0.8rem', 
+                        fontWeight: '800', 
+                        padding: '8px 16px', 
+                        borderRadius: '12px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        boxShadow: '0 4px 12px rgba(0,0,0,0.1)'
+                    }}>
+                        ⏱️ {getDuration(order.created_at)}
+                    </div>
                 </div>
+
+
 
                 <div style={{ padding: '20px 24px', overflowY: 'auto', display: 'flex', flexDirection: 'column', flex: 1 }}>
                     <div style={{
                         display: 'flex',
                         justifyContent: 'space-between',
                         alignItems: 'center',
-                        marginBottom: '16px'
+                        marginBottom: '20px',
+                        backgroundColor: 'rgba(255,255,255,0.03)',
+                        padding: '16px',
+                        borderRadius: '16px',
+                        border: '1px solid var(--border-subtle)'
                     }}>
-                        <span style={{ fontSize: '1.5rem', fontWeight: '700', letterSpacing: '-0.02em' }}>
-                            {(() => {
-                                if (order.table_id === 0) {
-                                    const meta = order.items.find(i => i.type === 'METADATA');
-                                    return meta ? `Parcel #TK-${meta.takeaway_no}` : 'Parcel';
-                                }
-                                return `Table ${order.table_id}`;
-                            })()}
+                        <span style={{ fontSize: '1.6rem', fontWeight: '900', letterSpacing: '-0.03em', color: 'var(--text-main)' }}>
+                            {order.table_id === 0 ? `Parcel #${order.items.find(i => i.type === 'METADATA')?.takeaway_no || order.id}` : `Table ${order.table_id}`}
                         </span>
-                        <span style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>{new Date().toLocaleTimeString()}</span>
+                        <div style={{ textAlign: 'right' }}>
+                            <p style={{ color: 'var(--text-muted)', fontSize: '0.75rem', fontWeight: '700', textTransform: 'uppercase', marginBottom: '2px' }}>Received At</p>
+                            <p style={{ color: 'var(--text-main)', fontSize: '0.95rem', fontWeight: '800' }}>{new Date(order.created_at || new Date()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
+                        </div>
                     </div>
+
 
                     <div className="items-list" style={{ 
                         flex: 1, 

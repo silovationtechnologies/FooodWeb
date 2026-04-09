@@ -41,6 +41,13 @@ const AdminPage = () => {
     const [showTransferModal, setShowTransferModal] = useState(null);
     const [showCombineModal, setShowCombineModal] = useState(null);
     const [showSettingsMenu, setShowSettingsMenu] = useState(false);
+    const [currentTime, setCurrentTime] = useState(Date.now());
+    const [historyFilter, setHistoryFilter] = useState('all'); // 'all' | 'dine-in' | 'parcel'
+    const [showOrderCustomize, setShowOrderCustomize] = useState(false);
+    const [selectedHistoryOrder, setSelectedHistoryOrder] = useState(null);
+
+
+
     
     // Split Payment & Manual Edit States
     const [editTotal, setEditTotal] = useState(0);
@@ -155,7 +162,11 @@ const AdminPage = () => {
         const pollInterval = setInterval(() => {
             fetchTables();
             fetchOrders();
-        }, 1500);
+        }, 5000); // Increased to 5s to enhance speed, real-time handles instant updates
+
+        const timeInterval = setInterval(() => {
+            setCurrentTime(Date.now());
+        }, 1000); // Updated to 1s for live feel
 
         const channel = supabase
             .channel('admin-ops')
@@ -172,6 +183,7 @@ const AdminPage = () => {
 
         return () => {
             clearInterval(pollInterval);
+            clearInterval(timeInterval);
             supabase.removeChannel(channel);
         };
     }, []);
@@ -221,6 +233,28 @@ const AdminPage = () => {
             console.log('Audio failed:', err);
         }
     };
+
+    const getDuration = (createdAt) => {
+        if (!createdAt) return '00:00:00';
+        const start = new Date(createdAt).getTime();
+        const diff = Math.max(0, currentTime - start);
+        const secsTotal = Math.floor(diff / 1000);
+        const hrs = Math.floor(secsTotal / 3600);
+        const mins = Math.floor((secsTotal % 3600) / 60);
+        const secs = secsTotal % 60;
+        return `${hrs.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+    };
+
+
+    const getDurationColor = (createdAt) => {
+        if (!createdAt) return 'var(--text-muted)';
+        const start = new Date(createdAt).getTime();
+        const mins = Math.floor((currentTime - start) / 60000);
+        if (mins < 15) return '#4ade80'; // Green
+        if (mins < 30) return '#fbbf24'; // Amber
+        return '#f87171'; // Red
+    };
+
 
     useEffect(() => {
         if (!newOrder && orders.length > 0) {
@@ -876,31 +910,41 @@ const AdminPage = () => {
     };
 
     const getStats = () => {
+        const lastReset = localStorage.getItem('dash_last_reset');
+        const resetTime = lastReset ? new Date(lastReset).getTime() : 0;
+
         const occupiedTableIds = new Set(
             orders.filter(o => o.status !== 'paid' && o.status !== 'rejected').map(o => o.table_id)
         );
         const occupied = occupiedTableIds.size;
         const free = tables.length - occupied;
-        const activeOrders = orders.length;
+        
+        // Active orders count (excluding LINK orders)
+        const activeOrders = orders.filter(o => o.status !== 'paid' && o.status !== 'rejected' && !(o.items?.length === 1 && o.items[0].type === 'LINK')).length;
 
-        // Revenue Breakdown
-        const paidOrders = orders.filter(o => o.status === 'paid');
+        // Revenue Breakdown (Filtered by Daily Reset)
+        const paidOrders = orders.filter(o => o.status === 'paid' && new Date(o.updated_at || o.created_at).getTime() > resetTime);
         const revenue = paidOrders.reduce((acc, curr) => acc + curr.total, 0);
         
         const cashRevenue = paidOrders.reduce((acc, curr) => {
-            const payMeta = curr.items.find(i => i.type === 'PAYMENT_METADATA');
+            const payMeta = curr.items?.find(i => i.type === 'PAYMENT_METADATA');
             const method = curr.payment_method || payMeta?.method || 'Cash';
-            return acc + (method === 'Cash' ? curr.total : 0);
+            if (method === 'Cash') return acc + curr.total;
+            if (method === 'Split' && payMeta?.split?.cash) return acc + payMeta.split.cash;
+            return acc;
         }, 0);
 
         const onlineRevenue = paidOrders.reduce((acc, curr) => {
-            const payMeta = curr.items.find(i => i.type === 'PAYMENT_METADATA');
+            const payMeta = curr.items?.find(i => i.type === 'PAYMENT_METADATA');
             const method = curr.payment_method || payMeta?.method;
-            return acc + (method === 'Online' ? curr.total : 0);
+            if (method === 'Online') return acc + curr.total;
+            if (method === 'Split' && payMeta?.split?.online) return acc + payMeta.split.online;
+            return acc;
         }, 0);
 
         return { free, occupied, activeOrders, revenue, cashRevenue, onlineRevenue };
     };
+
 
     const stats = getStats();
 
@@ -913,58 +957,25 @@ const AdminPage = () => {
                         <p style={{ color: 'var(--text-muted)', fontSize: '0.88rem', fontWeight: '500', marginTop: '4px' }}>Dashboard & Operations</p>
                     </div>
                     <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }} className="header-actions">
-                        {/* Desktop View Buttons */}
-                        <div className="desktop-only" style={{ display: 'flex', gap: '10px' }}>
+                        <div style={{ position: 'relative', display: 'flex', gap: '8px' }}>
                             <button
                                 onClick={() => window.location.href = '/dashboard'}
                                 style={{
                                     padding: '10px 16px',
                                     borderRadius: '14px',
-                                    background: 'linear-gradient(135deg, rgba(245,166,35,0.2), rgba(0,201,167,0.2))',
-                                    color: '#F5A623',
-                                    border: '1px solid rgba(245,166,35,0.4)',
+                                    backgroundColor: 'var(--glass)',
+                                    color: 'var(--text-main)',
+                                    border: '1px solid var(--border-subtle)',
                                     fontSize: '0.85rem',
                                     fontWeight: '700',
-                                    transition: 'all 0.3s',
-                                    cursor: 'pointer',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '8px',
+                                    cursor: 'pointer'
                                 }}
                             >
                                 📊 Dashboard
                             </button>
-                            <button
-                                onClick={() => setActiveTab('customize')}
-                                style={{
-                                    padding: '10px 16px',
-                                    borderRadius: '14px',
-                                    backgroundColor: activeTab === 'customize' ? 'var(--accent-white)' : 'var(--glass)',
-                                    color: activeTab === 'customize' ? 'var(--bg-dark)' : 'var(--text-main)',
-                                    border: '1px solid var(--border-subtle)',
-                                    fontSize: '0.85rem',
-                                    fontWeight: '700',
-                                    transition: 'all 0.3s'
-                                }}
-                            >
-                                ⚙️ Customize
-                            </button>
-                            <button
-                                onClick={startNewDay}
-                                style={{
-                                    padding: '10px 16px',
-                                    borderRadius: '14px',
-                                    backgroundColor: 'rgba(0, 201, 167, 0.15)',
-                                    color: '#00C9A7',
-                                    border: '1px solid rgba(0, 201, 167, 0.3)',
-                                    fontSize: '0.85rem',
-                                    fontWeight: '700',
-                                    transition: 'all 0.3s'
-                                }}
-                            >
-                                ✨ New Day
-                            </button>
-                        </div>
-
-                        {/* Mobile View Settings Button */}
-                        <div className="mobile-only" style={{ position: 'relative' }}>
                             <button
                                 onClick={() => setShowSettingsMenu(!showSettingsMenu)}
                                 style={{
@@ -977,28 +988,29 @@ const AdminPage = () => {
                                     fontWeight: '700',
                                     display: 'flex',
                                     alignItems: 'center',
-                                    gap: '8px'
+                                    gap: '8px',
+                                    cursor: 'pointer'
                                 }}
                             >
-                                ⚙️ Settings
+                                ⚙️ Customize
                             </button>
                             {showSettingsMenu && (
                                 <div className="glass animate-fade" style={{
                                     position: 'absolute',
                                     top: 'calc(100% + 8px)',
-                                    left: 0,
-                                    width: '200px',
-                                    borderRadius: '16px',
+                                    right: 0,
+                                    width: '220px',
+                                    borderRadius: '20px',
                                     padding: '8px',
-                                    zIndex: 100,
-                                    boxShadow: '0 10px 30px rgba(0,0,0,0.5)',
-                                    border: '1px solid var(--border-subtle)'
+                                    zIndex: 5000,
+                                    boxShadow: '0 20px 50px rgba(0,0,0,0.5)',
+                                    border: '1px solid var(--border-subtle)',
+                                    backdropFilter: 'blur(20px)'
                                 }}>
                                     {[
-                                        { label: '📊 Dashboard', onClick: () => window.location.href = '/dashboard' },
-                                        { label: '⚙️ Customize', onClick: () => setActiveTab('customize') },
-                                        { label: '✨ Start New Day', onClick: startNewDay, color: '#00C9A7' },
-                                        { label: '🚪 Sign Out', onClick: () => supabase.auth.signOut() }
+                                        { label: '✨ Start New Day', onClick: startNewDay, icon: '🌅', color: '#00C9A7' },
+                                        { label: '⚙️ Management', onClick: () => setActiveTab('customize'), icon: '🛠️' },
+                                        { label: '🚪 Sign Out', onClick: () => supabase.auth.signOut(), icon: '🔓', color: '#f87171' }
                                     ].map((item, idx) => (
                                         <button
                                             key={idx}
@@ -1006,49 +1018,29 @@ const AdminPage = () => {
                                             style={{
                                                 width: '100%',
                                                 textAlign: 'left',
-                                                padding: '12px 16px',
-                                                borderRadius: '10px',
+                                                padding: '14px 16px',
+                                                borderRadius: '12px',
                                                 backgroundColor: 'transparent',
                                                 color: item.color || 'var(--text-main)',
                                                 border: 'none',
                                                 fontSize: '0.9rem',
                                                 fontWeight: '600',
-                                                cursor: 'pointer'
+                                                cursor: 'pointer',
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                gap: '12px',
+                                                transition: 'background 0.2s'
                                             }}
+                                            onMouseEnter={(e) => e.target.style.background = 'rgba(255,255,255,0.05)'}
+                                            onMouseLeave={(e) => e.target.style.background = 'transparent'}
                                         >
-                                            {item.label}
+                                            <span style={{ fontSize: '1.1rem' }}>{item.icon}</span> {item.label}
                                         </button>
                                     ))}
                                 </div>
                             )}
                         </div>
 
-                        <div 
-                            onClick={() => {
-                                playOrderBeep();
-                            }}
-                            className="glass" 
-                            style={{ padding: '10px 16px', borderRadius: '14px', fontWeight: '600', color: 'var(--text-main)', fontSize: '0.85rem', cursor: 'pointer' }}
-                        >
-                            🔔 <span style={{ marginLeft: '6px' }}>{newOrder ? '1 New' : orders.filter(o => o.status === 'new').length}</span>
-                        </div>
-                        
-                        <div className="desktop-only">
-                            <button
-                                onClick={() => supabase.auth.signOut()}
-                                style={{
-                                    padding: '10px 16px',
-                                    borderRadius: '14px',
-                                    backgroundColor: 'var(--glass)',
-                                    color: 'var(--text-main)',
-                                    border: '1px solid var(--border-subtle)',
-                                    fontSize: '0.85rem',
-                                    fontWeight: '700',
-                                }}
-                            >
-                                Sign Out
-                            </button>
-                        </div>
                     </div>
                 </header>
 
@@ -1088,10 +1080,11 @@ const AdminPage = () => {
                         { label: 'Occupied',  val: stats.occupied,      icon: '🪑', c: 'var(--text-main)' },
                         { label: 'Free',       val: stats.free,          icon: '✅', c: 'var(--accent-green)' },
                         { label: 'Orders',     val: stats.activeOrders,  icon: '📋', c: 'var(--accent-purple)' },
-                        { label: 'Total Rev',  val: `₹${stats.revenue}`, icon: '💰', c: 'var(--text-main)' },
-                        { label: 'Cash',       val: `₹${stats.cashRevenue}`, icon: '💵', c: '#fbbf24' },
-                        { label: 'Online',     val: `₹${stats.onlineRevenue}`, icon: '💳', c: '#60a5fa' }
+                        { label: 'Daily Rev',  val: `₹${stats.revenue}`, icon: '💰', c: 'var(--text-main)' },
+                        { label: 'Daily Cash',       val: `₹${stats.cashRevenue}`, icon: '💵', c: '#fbbf24' },
+                        { label: 'Daily Online',     val: `₹${stats.onlineRevenue}`, icon: '💳', c: '#60a5fa' }
                     ].map((s, i) => (
+
                         <div key={i} className="glass" style={{ padding: '16px 12px', borderRadius: '18px', textAlign: 'center' }}>
                             <p style={{ fontSize: '1.2rem', marginBottom: '4px' }}>{s.icon}</p>
                             <p style={{ fontSize: 'clamp(1.1rem, 3.5vw, 1.8rem)', fontWeight: '900', color: s.c, letterSpacing: '-0.04em' }}>{s.val}</p>
@@ -1106,9 +1099,11 @@ const AdminPage = () => {
                         { id: 'floor',     label: '🪑 Floor' },
                         { id: 'queue',     label: '📋 Queue' },
                         { id: 'takeaway',  label: '📦 Parcel' },
+                        { id: 'history',   label: '📜 History' },
                         { id: 'inventory', label: '🏷️ Inventory' },
                         { id: 'categories', label: '📂 Categories' },
                         { id: 'customers', label: '👥 Customers' },
+
                     ].map(t => (
                         <button
                             key={t.id}
@@ -1483,32 +1478,63 @@ const AdminPage = () => {
                                         position: 'absolute',
                                         top: '16px',
                                         right: '16px',
-                                        padding: '4px 10px',
-                                        borderRadius: '16px',
-                                        fontSize: '0.7rem',
-                                        fontWeight: '700',
-                                        letterSpacing: '0.05em',
-                                        backgroundColor: isLinked ? 'rgba(255,255,255,0.1)' : isOccupied ? 'rgba(255,159,67,0.2)' : (hasNewOrder ? 'rgba(0,201,167,0.2)' : 'rgba(255,255,255,0.05)'),
-                                        color: isLinked ? '#94a3b8' : isOccupied ? '#ff9f43' : (hasNewOrder ? '#00c9a7' : '#64748b')
+                                        display: 'flex',
+                                        flexDirection: 'column',
+                                        alignItems: 'flex-end',
+                                        gap: '4px'
                                     }}>
-                                        {isLinked ? 'LINKED 🔗' : isOccupied ? 'OCCUPIED' : (hasNewOrder ? 'NEW ⚡' : 'FREE')}
+                                        <div style={{
+                                            padding: '4px 10px',
+                                            borderRadius: '16px',
+                                            fontSize: '0.7rem',
+                                            fontWeight: '700',
+                                            letterSpacing: '0.05em',
+                                            backgroundColor: isLinked ? 'rgba(255,255,255,0.1)' : isOccupied ? 'rgba(255,159,67,0.2)' : (hasNewOrder ? 'rgba(0,201,167,0.2)' : 'rgba(255,255,255,0.05)'),
+                                            color: isLinked ? '#94a3b8' : isOccupied ? '#ff9f43' : (hasNewOrder ? '#00c9a7' : '#64748b')
+                                        }}>
+                                            {isLinked ? 'LINKED 🔗' : isOccupied ? 'OCCUPIED' : (hasNewOrder ? 'NEW ⚡' : 'FREE')}
+                                        </div>
+
+
                                     </div>
 
-                                    <h3 style={{ fontSize: '1.6rem', marginBottom: '8px', fontWeight: '700', letterSpacing: '-0.02em', color: isOccupied ? '#ff9f43' : '#fff' }}>Table {table.id}</h3>
-                                    <p style={{ color: isOccupied ? 'rgba(0,0,0,0.6)' : 'var(--text-muted)', fontSize: '0.9rem', fontWeight: '500' }}>{table.seats} Seats</p>
+                                    <div style={{ position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
 
-                                    {(isOccupied || hasNewOrder) ? (
-                                        <div style={{ marginTop: '24px', color: isOccupied ? '#ff9f43' : '#00c9a7', fontSize: '0.85rem', fontWeight: '600', letterSpacing: '0.05em' }}>
-                                            VIEW ORDER →
-                                        </div>
-                                    ) : (
-                                        <button
-                                            onClick={(e) => { e.stopPropagation(); setShowManualOrder(table.id); }}
-                                            style={{ marginTop: '20px', padding: '8px 16px', backgroundColor: 'var(--glass)', border: '1px solid var(--border-subtle)', borderRadius: '12px', color: 'var(--text-main)', fontSize: '0.75rem', fontWeight: '700' }}
-                                        >
-                                            + Manual Order
-                                        </button>
-                                    )}
+                                        <h3 style={{ fontSize: '1.6rem', marginBottom: '8px', fontWeight: '900', letterSpacing: '-0.02em', color: isOccupied ? 'var(--bg-dark)' : '#fff' }}>Table {table.id}</h3>
+                                        <p style={{ color: isOccupied ? 'rgba(0,0,0,0.6)' : 'var(--text-muted)', fontSize: '0.9rem', fontWeight: '500' }}>{table.seats} Seats</p>
+
+                                        {isOccupied && tableOrder && (
+                                            <div style={{ 
+                                                fontSize: '0.75rem', 
+                                                fontWeight: '800', 
+                                                color: 'var(--text-main)',
+                                                backgroundColor: 'rgba(255,255,255,0.15)',
+                                                padding: '6px 14px',
+                                                borderRadius: '14px',
+                                                marginTop: '12px',
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                gap: '6px',
+                                                border: '1px solid rgba(255,255,255,0.2)'
+                                            }}>
+                                                ⏱️ {getDuration(tableOrder.created_at)}
+                                            </div>
+                                        )}
+
+                                        {(isOccupied || hasNewOrder) ? (
+                                            <div style={{ marginTop: '20px', color: isOccupied ? 'rgba(0,0,0,0.8)' : '#00c9a7', fontSize: '0.85rem', fontWeight: '900', letterSpacing: '0.02em', borderBottom: '2px solid' }}>
+                                                VIEW ORDER →
+                                            </div>
+                                        ) : (
+                                            <button
+                                                onClick={(e) => { e.stopPropagation(); setShowManualOrder(table.id); }}
+                                                style={{ marginTop: '20px', padding: '10px 20px', backgroundColor: 'var(--glass)', border: '1px solid var(--border-subtle)', borderRadius: '14px', color: 'var(--text-main)', fontSize: '0.8rem', fontWeight: '800', cursor: 'pointer' }}
+                                            >
+                                                + Manual Order
+                                            </button>
+                                        )}
+                                    </div>
+
                                 </div>
                             );
                         })}
@@ -1624,6 +1650,120 @@ const AdminPage = () => {
                             </div>
                         )}
                     </div>
+                ) : activeTab === 'history' ? (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                        <div style={{ display: 'flex', gap: '10px', background: 'var(--glass)', padding: '5px', borderRadius: '16px', width: 'fit-content' }}>
+                            {['all', 'dine-in', 'parcel'].map(f => (
+                                <button
+                                    key={f}
+                                    onClick={() => setHistoryFilter(f)}
+                                    style={{
+                                        padding: '8px 16px',
+                                        backgroundColor: historyFilter === f ? 'var(--accent-white)' : 'transparent',
+                                        color: historyFilter === f ? 'var(--bg-dark)' : 'var(--text-muted)',
+                                        border: 'none',
+                                        borderRadius: '12px',
+                                        fontWeight: '700',
+                                        fontSize: '0.8rem',
+                                        cursor: 'pointer',
+                                        transition: 'all 0.2s'
+                                    }}
+                                >
+                                    {f === 'all' ? '📜 All History' : f === 'dine-in' ? '🪑 Dine-In' : '📦 Parcel'}
+                                </button>
+                            ))}
+                        </div>
+
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                            {orders
+                                .filter(o => o.status === 'paid')
+                                .filter(o => {
+                                    if (historyFilter === 'all') return true;
+                                    if (historyFilter === 'dine-in') return o.table_id > 0;
+                                    if (historyFilter === 'parcel') return o.table_id === 0;
+                                    return true;
+                                })
+                                .sort((a,b) => new Date(b.updated_at || b.created_at) - new Date(a.updated_at || a.created_at))
+                                .map(order => {
+                                    const meta = order.items.find(i => i.type === 'METADATA');
+                                    const payMeta = order.items.find(i => i.type === 'PAYMENT_METADATA');
+                                    const parcelNo = meta ? `P-${meta.takeaway_no}` : null;
+                                    const sessionTime = order.table_id > 0 ? Math.floor((new Date(order.updated_at).getTime() - new Date(order.created_at).getTime()) / 60000) : null;
+                                    
+                                    return (
+                                        <div 
+                                            key={order.id} 
+                                            onClick={() => setSelectedHistoryOrder(order)}
+                                            className="glass history-item-row" 
+                                            style={{ 
+                                                padding: '20px 24px', 
+                                                borderRadius: '24px', 
+                                                display: 'flex', 
+                                                justifyContent: 'space-between', 
+                                                alignItems: 'center', 
+                                                border: '1px solid var(--border-subtle)',
+                                                cursor: 'pointer',
+                                                transition: 'all 0.2s',
+                                                marginBottom: '10px'
+                                            }}
+                                        >
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '20px', flex: 1 }}>
+                                                <div style={{ width: '56px', height: '56px', borderRadius: '18px', backgroundColor: 'rgba(255,255,255,0.03)', border: '1px solid var(--border-subtle)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.4rem' }}>
+                                                    {order.table_id === 0 ? '📦' : '🪑'}
+                                                </div>
+                                                <div>
+                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '4px' }}>
+                                                        <span style={{ fontSize: '1.1rem', fontWeight: '800', color: 'var(--text-main)' }}>
+                                                            {order.table_id === 0 ? `Parcel #${parcelNo || order.id}` : `Table ${order.table_id}`}
+                                                        </span>
+                                                        <span style={{ 
+                                                            fontSize: '0.65rem', 
+                                                            fontWeight: '800', 
+                                                            color: order.status === 'paid' ? '#4ade80' : '#f87171',
+                                                            backgroundColor: order.status === 'paid' ? 'rgba(74,222,128,0.1)' : 'rgba(248,113,113,0.1)',
+                                                            padding: '2px 8px',
+                                                            borderRadius: '6px',
+                                                            textTransform: 'uppercase'
+                                                        }}>
+                                                            {order.status}
+                                                        </span>
+                                                        <span style={{ 
+                                                            fontSize: '0.65rem', 
+                                                            fontWeight: '800', 
+                                                            color: payMeta?.method === 'Online' ? '#60a5fa' : '#fbbf24',
+                                                            backgroundColor: payMeta?.method === 'Online' ? 'rgba(96,165,250,0.1)' : 'rgba(251,191,36,0.1)',
+                                                            padding: '2px 8px',
+                                                            borderRadius: '6px',
+                                                            textTransform: 'uppercase'
+                                                        }}>
+                                                            {payMeta?.method || 'CASH'}
+                                                        </span>
+                                                    </div>
+                                                    <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', fontWeight: '500' }}>
+                                                        {order.items.filter(i => i.type !== 'METADATA').map(i => `${i.qty}x ${i.name}`).join(', ')}
+                                                    </p>
+                                                    <p style={{ color: 'var(--text-faint)', fontSize: '0.8rem', marginTop: '4px' }}>
+                                                        {new Date(order.updated_at || order.created_at).toLocaleDateString(undefined, { day: '2-digit', month: 'short' })}, {new Date(order.updated_at || order.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                                    </p>
+                                                </div>
+                                            </div>
+                                            <div style={{ textAlign: 'right' }}>
+                                                <p style={{ fontSize: '1.4rem', fontWeight: '900', color: 'var(--text-main)' }}>₹{order.total}</p>
+                                                <div style={{ fontSize: '1rem', color: 'var(--text-muted)' }}>›</div>
+                                            </div>
+                                        </div>
+
+                                    );
+                                })}
+                            
+                            {orders.filter(o => o.status === 'paid').length === 0 && (
+                                <div style={{ textAlign: 'center', padding: '100px 0', color: 'var(--text-muted)' }}>
+                                    No history found.
+                                </div>
+                            )}
+                        </div>
+                    </div>
+
                 ) : (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
                         {orders.filter(o => o.table_id !== 0 && o.status !== 'paid' && o.status !== 'rejected' && !(o.items?.length === 1 && o.items[0].type === 'LINK')).map(order => (
@@ -1698,30 +1838,46 @@ const AdminPage = () => {
                             display: 'flex', 
                             flexDirection: 'column' 
                         }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '32px', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
-                                <h2 style={{ fontSize: '1.2rem', fontWeight: '600', letterSpacing: '-0.02em', color: 'var(--text-main)', display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
-                                    {(() => {
-                                        if (selectedTableOrder.table_id === 0) {
-                                            const meta = selectedTableOrder.items.find(i => i.type === 'METADATA');
-                                            return `Parcel Order #${meta ? `P-${meta.takeaway_no}` : selectedTableOrder.id}`;
-                                        }
-                                        return `Table ${selectedTableOrder.table_id} Order`;
-                                    })()}
-                                    {selectedTableOrder.table_id !== 0 && (
-                                        <>
-                                            <button 
-                                                onClick={() => setShowTransferModal(selectedTableOrder)}
-                                                style={{ fontSize: '0.8rem', padding: '6px 12px', borderRadius: '12px', backgroundColor: 'var(--glass)', border: '1px solid var(--border-subtle)', color: 'var(--text-main)', display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer' }}
-                                            >Transfer ➡️</button>
-                                            <button 
-                                                onClick={() => setShowCombineModal(selectedTableOrder)}
-                                                style={{ fontSize: '0.8rem', padding: '6px 12px', borderRadius: '12px', backgroundColor: 'var(--glass)', border: '1px solid var(--border-subtle)', color: 'var(--text-main)', display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer' }}
-                                            >Combine 🔗</button>
-                                        </>
-                                    )}
-                                </h2>
-                                <button onClick={() => setSelectedTableOrder(null)} style={{ backgroundColor: 'var(--glass)', border: '1px solid var(--border-subtle)', width: '36px', height: '36px', borderRadius: '18px', fontSize: '1.2rem', color: 'var(--text-main)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>✕</button>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '32px', alignItems: 'center', flexWrap: 'nowrap', gap: '12px' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flex: 1, minWidth: 0 }}>
+                                    <h2 style={{ fontSize: '1.6rem', fontWeight: '900', color: 'var(--text-main)', margin: 0 }}>
+                                        {selectedTableOrder.table_id === 0 ? `Parcel #${selectedTableOrder.items.find(i => i.type === 'METADATA')?.takeaway_no || selectedTableOrder.id}` : `Table ${selectedTableOrder.table_id}`}
+                                    </h2>
+                                    
+                                    <div style={{ position: 'relative' }}>
+                                        <button 
+                                            onClick={() => setShowOrderCustomize(!showOrderCustomize)}
+                                            style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 16px', borderRadius: '12px', background: 'var(--glass)', border: '1px solid var(--border-subtle)', color: 'var(--text-main)', fontSize: '0.9rem', fontWeight: '700', cursor: 'pointer' }}
+                                        >
+                                            ⚙️ Customize ▾
+                                        </button>
+                                        {showOrderCustomize && (
+                                            <div className="glass" style={{ position: 'absolute', top: '100%', left: 0, marginTop: '8px', zIndex: 3000, width: '180px', padding: '8px', borderRadius: '16px', border: '1px solid var(--border-subtle)', boxShadow: 'var(--shadow-xl)' }}>
+                                                <button onClick={() => { setShowTransferModal(selectedTableOrder); setShowOrderCustomize(false); }} style={{ width: '100%', padding: '10px 12px', textAlign: 'left', background: 'none', border: 'none', color: 'var(--text-main)', fontSize: '0.85rem', fontWeight: '600', cursor: 'pointer', borderRadius: '8px', display: 'flex', alignItems: 'center', gap: '8px' }}>➡️ Transfer Table</button>
+                                                <button onClick={() => { setShowCombineModal(selectedTableOrder); setShowOrderCustomize(false); }} style={{ width: '100%', padding: '10px 12px', textAlign: 'left', background: 'none', border: 'none', color: 'var(--text-main)', fontSize: '0.85rem', fontWeight: '600', cursor: 'pointer', borderRadius: '8px', display: 'flex', alignItems: 'center', gap: '8px' }}>🔗 Combine Table</button>
+                                            </div>
+                                        )}
+                                    </div>
+
+                                    <div style={{ 
+                                        fontSize: '0.8rem', 
+                                        fontWeight: '800', 
+                                        color: '#4ade80',
+                                        backgroundColor: 'rgba(74,222,128,0.1)',
+                                        padding: '8px 16px',
+                                        borderRadius: '12px',
+                                        border: '1px solid rgba(74,222,128,0.2)',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        gap: '6px'
+                                    }}>
+                                        ⏱️ {getDuration(selectedTableOrder.created_at)}
+                                    </div>
+                                </div>
+                                <button onClick={() => setSelectedTableOrder(null)} style={{ background: 'var(--glass)', border: '1px solid var(--border-subtle)', width: '48px', height: '48px', borderRadius: '24px', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.4rem' }}>✕</button>
+
                             </div>
+
 
                             <div style={{ flex: 1, overflowY: 'auto', minHeight: '0', display: 'flex', flexDirection: 'column', marginBottom: '32px' }}>
                                 {/* Scrollable Items List */}
@@ -1968,19 +2124,11 @@ const AdminPage = () => {
                             </div>
 
                             <div style={{ display: 'flex', gap: '16px', alignItems: 'center', flexShrink: 0 }}>
-                                {selectedTableOrder.status === 'new' && (
-                                    <button
-                                        onClick={() => acceptOrder(selectedTableOrder.id, selectedTableOrder.table_id)}
-                                        style={{ height: '56px', flex: 1, backgroundColor: 'var(--text-main)', color: 'var(--bg-dark)', fontWeight: '700', borderRadius: '16px', cursor: 'pointer' }}
-                                    >
-                                        Take Order
-                                    </button>
-                                )}
                                 {!isSplitPayment ? (
                                     <>
                                         <button
                                             onClick={() => selectedTableOrder.table_id == 0 ? completeTakeaway(selectedTableOrder.id, 'Cash') : markTableFree(selectedTableOrder.table_id, 'Cash')}
-                                            style={{ height: '56px', flex: 1, backgroundColor: '#fbbf24', color: '#000', fontWeight: '700', borderRadius: '16px', cursor: 'pointer' }}
+                                            style={{ height: '60px', flex: 1, backgroundColor: '#ffbd2e', color: '#000', fontWeight: '900', borderRadius: '20px', cursor: 'pointer', border: 'none', fontSize: '1rem', boxShadow: '0 4px 12px rgba(255,189,46,0.2)' }}
                                         >
                                             Paid CASH
                                         </button>
@@ -1990,14 +2138,13 @@ const AdminPage = () => {
                                                 setSplitCashAmount(editTotal);
                                                 setSplitOnlineAmount(0);
                                             }}
-                                            style={{ width: '56px', height: '56px', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: 'var(--glass)', border: '1px solid var(--border-subtle)', color: 'var(--text-main)', fontSize: '1.5rem', fontWeight: '700', borderRadius: '16px', cursor: 'pointer' }}
-                                            title="Split Payment (Cash + Online)"
+                                            style={{ width: '60px', height: '60px', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.05)', border: '1px solid var(--border-subtle)', color: 'var(--text-main)', fontSize: '1.8rem', fontWeight: '700', borderRadius: '20px', cursor: 'pointer' }}
                                         >
                                             +
                                         </button>
                                         <button
                                             onClick={() => selectedTableOrder.table_id == 0 ? completeTakeaway(selectedTableOrder.id, 'Online') : markTableFree(selectedTableOrder.table_id, 'Online')}
-                                            style={{ height: '56px', flex: 1, backgroundColor: '#60a5fa', color: '#000', fontWeight: '700', borderRadius: '16px', cursor: 'pointer' }}
+                                            style={{ height: '60px', flex: 1, backgroundColor: '#3b82f6', color: '#fff', fontWeight: '900', borderRadius: '20px', cursor: 'pointer', border: 'none', fontSize: '1rem', boxShadow: '0 4px 12px rgba(59,130,246,0.2)' }}
                                         >
                                             Paid ONLINE
                                         </button>
@@ -2006,18 +2153,19 @@ const AdminPage = () => {
                                     <button
                                         disabled={splitCashAmount + splitOnlineAmount !== editTotal}
                                         onClick={() => selectedTableOrder.table_id == 0 ? completeTakeaway(selectedTableOrder.id, 'Split', { cash: splitCashAmount, online: splitOnlineAmount }) : markTableFree(selectedTableOrder.table_id, 'Split', { cash: splitCashAmount, online: splitOnlineAmount })}
-                                        style={{ height: '56px', flex: 2, backgroundColor: 'var(--teal)', color: '#000', fontWeight: '700', borderRadius: '16px', cursor: (splitCashAmount + splitOnlineAmount !== editTotal) ? 'not-allowed' : 'pointer', opacity: (splitCashAmount + splitOnlineAmount !== editTotal) ? 0.5 : 1 }}
+                                        style={{ height: '60px', flex: 2, backgroundColor: 'var(--teal)', color: '#000', fontWeight: '900', borderRadius: '20px', cursor: (splitCashAmount + splitOnlineAmount !== editTotal) ? 'not-allowed' : 'pointer', opacity: (splitCashAmount + splitOnlineAmount !== editTotal) ? 0.5 : 1, border: 'none' }}
                                     >
-                                        Confirm Split Payment (₹{splitCashAmount} + ₹{splitOnlineAmount})
+                                        Confirm Split Payment
                                     </button>
                                 )}
                                 <button
                                     onClick={() => setInvoiceOrder(selectedTableOrder)}
-                                    style={{ height: '56px', width: '90px', backgroundColor: 'var(--accent-white)', color: 'var(--bg-dark)', fontWeight: '700', borderRadius: '16px', cursor: 'pointer' }}
+                                    style={{ height: '60px', width: '110px', backgroundColor: 'var(--accent-white)', color: 'var(--bg-dark)', fontWeight: '900', borderRadius: '20px', cursor: 'pointer', border: 'none', fontSize: '1rem' }}
                                 >
                                     Invoice
                                 </button>
                             </div>
+
                         </div>
                     </div>
                 )}
@@ -2238,6 +2386,7 @@ const AdminPage = () => {
                     onAccept={acceptOrder}
                     onDismiss={() => rejectOrder(newOrder)}
                     onUpdateItemQty={handleUpdateItemQty}
+                    currentTime={currentTime}
                 />
             )}
 
@@ -2615,8 +2764,176 @@ const AdminPage = () => {
                     </div>
                 </div>
             )}
+            {/* History Detail Modal (Snackssmania Aesthetic) */}
+            {selectedHistoryOrder && (
+                <div 
+                    style={{ position: 'fixed', inset: 0, zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.9)', backdropFilter: 'blur(20px)', padding: '20px' }}
+                    onClick={() => setSelectedHistoryOrder(null)}
+                >
+                    <div 
+                        className="glass animate-pop" 
+                        style={{ width: '100%', maxWidth: '440px', borderRadius: '32px', padding: '32px', backgroundColor: '#111', border: '1px solid rgba(255,255,255,0.1)', position: 'relative', boxShadow: '0 40px 100px rgba(0,0,0,0.8)' }}
+                        onClick={e => e.stopPropagation()}
+                    >
+                        {/* Header */}
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '32px' }}>
+                            <div>
+                                <h2 style={{ fontSize: '1.8rem', fontWeight: '900', color: '#fff', marginBottom: '8px', letterSpacing: '-0.03em' }}>
+                                    {selectedHistoryOrder?.table_id === 0 ? 'Parcel' : `Table ${selectedHistoryOrder?.table_id || '?'}`}
+                                </h2>
+                                <p style={{ fontSize: '0.85rem', color: 'rgba(255,255,255,0.4)', fontWeight: '600' }}>
+                                    {selectedHistoryOrder?.created_at ? new Date(selectedHistoryOrder.created_at).toLocaleString('en-IN', { day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'Date Unknown'}
+                                </p>
+                            </div>
+                            <button 
+                                onClick={() => setSelectedHistoryOrder(null)} 
+                                style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', width: '40px', height: '40px', borderRadius: '20px', color: '#fff', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.2rem' }}
+                            >✕</button>
+                        </div>
+
+                        {/* Items Section */}
+                        <div style={{ backgroundColor: 'rgba(255,255,255,0.03)', borderRadius: '24px', padding: '24px', border: '1px solid rgba(255,255,255,0.05)', marginBottom: '32px' }}>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', marginBottom: '24px' }}>
+                                {(selectedHistoryOrder?.items || []).filter(i => i.type !== 'METADATA' && i.name && i.qty > 0).map((item, idx) => (
+                                    <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                        <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+                                            <span style={{ fontSize: '1rem', fontWeight: '800', color: '#fff' }}>{item?.qty || 0}x</span>
+                                            <span style={{ fontSize: '1rem', fontWeight: '600', color: 'rgba(255,255,255,0.8)' }}>{item?.name || 'Unknown Item'}</span>
+                                        </div>
+                                        <span style={{ fontFamily: 'var(--font-mono)', fontSize: '1rem', fontWeight: '700', color: '#fff' }}>₹{ (item?.price || 0) * (item?.qty || 0) }</span>
+                                    </div>
+                                ))}
+                            </div>
+                            
+                            <div style={{ borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: '20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <span style={{ fontSize: '0.9rem', fontWeight: '700', color: 'rgba(255,255,255,0.4)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Total Amount</span>
+                                <span style={{ fontSize: '1.8rem', fontWeight: '900', color: '#fff' }}>₹{selectedHistoryOrder?.total || 0}</span>
+                            </div>
+                        </div>
+
+                        {/* Status Footer */}
+                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '40px', padding: '0 12px' }}>
+                            <div>
+                                <p style={{ fontSize: '0.75rem', color: 'rgba(255,255,255,0.4)', fontWeight: '800', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: '8px' }}>Payment Method</p>
+                                <p style={{ fontSize: '1.1rem', fontWeight: '800', color: '#4f46e5' }}>{selectedHistoryOrder?.payment_method || 'Online'}</p>
+                            </div>
+                            <div style={{ textAlign: 'right' }}>
+                                <p style={{ fontSize: '0.75rem', color: 'rgba(255,255,255,0.4)', fontWeight: '800', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: '8px' }}>Status</p>
+                                <p style={{ fontSize: '1.1rem', fontWeight: '800', color: '#10b981' }}>PAID</p>
+                            </div>
+                        </div>
+
+                        {/* Actions */}
+                        <div style={{ display: 'flex', gap: '16px' }}>
+                            <button 
+                                onClick={async (e) => {
+                                    e.stopPropagation();
+                                    if (window.confirm('Permanently delete this record?')) {
+                                        const { error } = await supabase.from('orders').delete().eq('id', selectedHistoryOrder.id);
+                                        if (error) alert(error.message);
+                                        else { fetchOrders(); setSelectedHistoryOrder(null); }
+                                    }
+                                }}
+                                style={{ flex: 1, padding: '18px', borderRadius: '18px', backgroundColor: 'rgba(239, 68, 68, 0.1)', color: '#ef4444', border: '1px solid rgba(239, 68, 68, 0.2)', fontWeight: '800', cursor: 'pointer', transition: 'all 0.2s' }}
+                            >
+                                Delete Order
+                            </button>
+                            <button 
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    setInvoiceOrder(selectedHistoryOrder);
+                                    setSelectedHistoryOrder(null);
+                                }}
+                                style={{ flex: 1.5, padding: '18px', borderRadius: '18px', backgroundColor: '#fff', color: '#000', fontWeight: '900', cursor: 'pointer', border: 'none', transition: 'all 0.2s' }}
+                            >
+                                View / Print Invoice
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </>
     );
 };
+
+// ─── HELPERS ──────────────────────────────────────────────────────────────────
+const MemoizedTableCard = React.memo(({ table, tableOrder, hasNewOrder, isLinked, getDuration, onClick, onManualOrder }) => {
+    const isOccupied = !!tableOrder;
+    return (
+        <div
+            onClick={onClick}
+            className="glass"
+            style={{
+                padding: '32px 24px',
+                borderRadius: '24px',
+                border: isLinked ? '1px dashed rgba(255,255,255,0.2)' : isOccupied ? '1px solid rgba(255,159,67,0.3)' : (hasNewOrder ? '1px solid rgba(0,201,167,0.4)' : '1px solid rgba(255,255,255,0.08)'),
+                backgroundColor: isLinked ? 'rgba(255,255,255,0.03)' : isOccupied ? 'rgba(255,159,67,0.1)' : (hasNewOrder ? 'rgba(0,201,167,0.1)' : 'rgba(255,255,255,0.02)'),
+                color: isOccupied && !isLinked ? '#ff9f43' : (hasNewOrder ? '#00c9a7' : '#fff'),
+                cursor: (isOccupied || hasNewOrder || isLinked) ? 'pointer' : 'default',
+                position: 'relative',
+                textAlign: 'center',
+                transition: 'all 0.3s cubic-bezier(0.25, 1, 0.5, 1)'
+            }}
+        >
+            <div style={{
+                position: 'absolute',
+                top: '16px',
+                right: '16px',
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'flex-end',
+                gap: '4px'
+            }}>
+                <div style={{
+                    padding: '4px 10px',
+                    borderRadius: '16px',
+                    fontSize: '0.7rem',
+                    fontWeight: '700',
+                    letterSpacing: '0.05em',
+                    backgroundColor: isLinked ? 'rgba(255,255,255,0.1)' : isOccupied ? 'rgba(255,159,67,0.2)' : (hasNewOrder ? 'rgba(0,201,167,0.2)' : 'rgba(255,255,255,0.05)'),
+                    color: isLinked ? '#94a3b8' : isOccupied ? '#ff9f43' : (hasNewOrder ? '#00c9a7' : '#64748b')
+                }}>
+                    {isLinked ? 'LINKED 🔗' : isOccupied ? 'OCCUPIED' : (hasNewOrder ? 'NEW ⚡' : 'FREE')}
+                </div>
+            </div>
+
+            <div style={{ position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                <h3 style={{ fontSize: '1.6rem', marginBottom: '8px', fontWeight: '900', letterSpacing: '-0.02em', color: isOccupied ? 'var(--bg-dark)' : '#fff' }}>Table {table.id}</h3>
+                <p style={{ color: isOccupied ? 'rgba(0,0,0,0.6)' : 'var(--text-muted)', fontSize: '0.9rem', fontWeight: '500' }}>{table.seats} Seats</p>
+
+                {isOccupied && tableOrder && (
+                    <div style={{ 
+                        fontSize: '0.75rem', 
+                        fontWeight: '800', 
+                        color: 'var(--text-main)',
+                        backgroundColor: 'rgba(255,255,255,0.15)',
+                        padding: '6px 14px',
+                        borderRadius: '14px',
+                        marginTop: '12px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        border: '1px solid rgba(255,255,255,0.2)'
+                    }}>
+                        ⏱️ {getDuration(tableOrder.created_at)}
+                    </div>
+                )}
+
+                {(isOccupied || hasNewOrder) ? (
+                    <div style={{ marginTop: '20px', color: isOccupied ? 'rgba(0,0,0,0.8)' : '#00c9a7', fontSize: '0.85rem', fontWeight: '900', letterSpacing: '0.02em', borderBottom: '2px solid' }}>
+                        VIEW ORDER →
+                    </div>
+                ) : (
+                    <button
+                        onClick={(e) => { e.stopPropagation(); onManualOrder(); }}
+                        style={{ marginTop: '20px', padding: '10px 20px', backgroundColor: 'var(--glass)', border: '1px solid var(--border-subtle)', borderRadius: '14px', color: 'var(--text-main)', fontSize: '0.8rem', fontWeight: '800', cursor: 'pointer' }}
+                    >
+                        + Manual Order
+                    </button>
+                )}
+            </div>
+        </div>
+    );
+});
 
 export default AdminPage;
