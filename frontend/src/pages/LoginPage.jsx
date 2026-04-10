@@ -22,6 +22,9 @@ const LoginPage = () => {
                     password,
                 });
                 if (error) throw error;
+                // Hard redirect to admin immediately
+                window.location.href = '/admin';
+                return;
             } else {
                 const { error } = await supabase.auth.signUp({
                     email,
@@ -31,7 +34,6 @@ const LoginPage = () => {
                 alert('Signup successful! You can now log in.');
                 setIsLogin(true);
             }
-            if (isLogin) navigate('/admin');
         } catch (err) {
             let userMessage = err.message;
             if (err.message.toLowerCase().includes('email not confirmed')) {

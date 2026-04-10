@@ -1010,7 +1010,7 @@ const AdminPage = () => {
                                     {[
                                         { label: '✨ Start New Day', onClick: startNewDay, icon: '🌅', color: '#00C9A7' },
                                         { label: '⚙️ Management', onClick: () => setActiveTab('customize'), icon: '🛠️' },
-                                        { label: '🚪 Sign Out', onClick: () => supabase.auth.signOut(), icon: '🔓', color: '#f87171' }
+                                        { label: '🚪 Sign Out', onClick: async () => { await supabase.auth.signOut(); window.location.href = '/'; }, icon: '🔓', color: '#f87171' }
                                     ].map((item, idx) => (
                                         <button
                                             key={idx}

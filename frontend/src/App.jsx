@@ -7,6 +7,14 @@ import AdminPage from './pages/AdminPage';
 import LoginPage from './pages/LoginPage';
 import DashboardPage from './pages/DashboardPage';
 
+// Landing Pages
+import LandingLayout from './components/landing/LandingLayout';
+import HomePage from './pages/landing/HomePage';
+import ServicesPage from './pages/landing/ServicesPage';
+import PricingPage from './pages/landing/PricingPage';
+import BlogPage from './pages/landing/BlogPage';
+import ContactPage from './pages/landing/ContactPage';
+
 function App() {
   const [session, setSession] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -17,32 +25,27 @@ function App() {
       setLoading(false);
     });
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session);
-    });
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      (_event, session) => {
+        setSession(session);
+      }
+    );
 
     return () => subscription.unsubscribe();
   }, []);
 
-  if (loading) {
-    return (
-      <div style={{ 
-        height: '100vh', 
-        display: 'flex', 
-        alignItems: 'center', 
-        justifyContent: 'center', 
-        background: '#050507', 
-        color: 'white' 
-      }}>
-        Loading...
-      </div>
-    );
-  }
+  if (loading) return <div style={{ color: 'white' }}>Loading...</div>;
 
   return (
     <BrowserRouter>
       <Routes>
-        <Route path="/" element={<Navigate to="/admin" />} />
+        <Route element={<LandingLayout />}>
+          <Route path="/" element={<HomePage />} />
+          <Route path="/services" element={<ServicesPage />} />
+          <Route path="/pricing" element={<PricingPage />} />
+          <Route path="/blog" element={<BlogPage />} />
+          <Route path="/contact" element={<ContactPage />} />
+        </Route>
         <Route path="/qr" element={<QRPage />} />
         <Route path="/menu" element={<MenuPage />} />
         <Route path="/login" element={session ? <Navigate to="/admin" /> : <LoginPage />} />
