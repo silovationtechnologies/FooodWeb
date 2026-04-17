@@ -790,7 +790,7 @@ export default function DashboardPage({ theme }) {
   if (loading) {
     return (
       <div style={{ height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#080b14', color: '#fff', fontFamily: 'Outfit, sans-serif', fontSize: '1.2rem' }}>
-        Loading dashboard…
+        Loading Sales Dashboard…
       </div>
     );
   }
@@ -811,7 +811,7 @@ export default function DashboardPage({ theme }) {
 
           {/* Header */}
           <div className="ldb-header">
-            <h1 className="ldb-title">Foood<span>Web</span> Dashboard</h1>
+            <h1 className="ldb-title">Foood<span>Web</span> Sales Dashboard</h1>
             <button className="ldb-back" onClick={() => history.back()}>← Back to Admin</button>
           </div>
 

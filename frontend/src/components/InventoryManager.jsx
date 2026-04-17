@@ -163,7 +163,7 @@ const InventoryManager = ({ materials, setMaterials, recipes, setRecipes, consum
             {/* Sub Tabs */}
             <div style={{ display: 'flex', gap: '8px', marginBottom: '28px', overflowX: 'auto', paddingBottom: '4px', scrollbarWidth: 'none' }}>
                 {[
-                    { id: 'dashboard', label: '📊 Overview' },
+                    { id: 'dashboard', label: '📊 Sales Dashboard' },
                     { id: 'materials', label: '📦 Materials' },
                     { id: 'recipes',   label: '🍽️ Recipes' },
                     { id: 'history',   label: '🕒 History' },

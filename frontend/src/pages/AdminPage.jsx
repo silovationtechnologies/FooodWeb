@@ -5,6 +5,7 @@ import InvoiceModal from '../components/InvoiceModal';
 import InventoryManager from '../components/InventoryManager';
 import BulkQRModal from '../components/BulkQRModal';
 import { QRCodeSVG } from 'qrcode.react';
+import Skeleton from '../components/Skeleton';
 
 const AdminPage = () => {
     const [tables, setTables] = useState([]);
@@ -454,7 +455,7 @@ const AdminPage = () => {
     };
 
     const startNewDay = () => {
-        const confirmClear = confirm("Are you sure you want to START A NEW DAY? This will reset the dashboard stats but KEEP all revenue data in history.");
+        const confirmClear = confirm("Are you sure you want to START A NEW DAY? This will reset the sales dashboard stats but KEEP all revenue data in history.");
         if (!confirmClear) return;
 
         try {
@@ -948,13 +949,56 @@ const AdminPage = () => {
 
     const stats = getStats();
 
+    if (loading) {
+        return (
+            <div className="admin-container animate-fade" style={{ minHeight: '100vh', background: 'var(--bg-dark)', padding: '40px' }}>
+                <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '32px' }}>
+                    <div>
+                        <Skeleton width="240px" height="2.5rem" borderRadius="8px" />
+                        <Skeleton width="180px" height="1rem" borderRadius="4px" style={{ marginTop: '8px' }} />
+                    </div>
+                    <div style={{ display: 'flex', gap: '12px' }}>
+                        <Skeleton width="120px" height="40px" borderRadius="14px" />
+                        <Skeleton width="120px" height="40px" borderRadius="14px" />
+                    </div>
+                </header>
+
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: '12px', marginBottom: '28px' }}>
+                    {Array.from({ length: 6 }).map((_, i) => (
+                        <div key={i} className="glass" style={{ padding: '16px 12px', borderRadius: '18px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
+                            <Skeleton width="30px" height="30px" borderRadius="50%" />
+                            <Skeleton width="60%" height="1.5rem" />
+                            <Skeleton width="40%" height="0.5rem" />
+                        </div>
+                    ))}
+                </div>
+
+                <div style={{ display: 'flex', gap: '8px', marginBottom: '24px', background: 'var(--glass)', padding: '5px', borderRadius: '18px' }}>
+                    {Array.from({ length: 7 }).map((_, i) => (
+                        <Skeleton key={i} width="100px" height="40px" borderRadius="14px" />
+                    ))}
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: '16px' }}>
+                    {Array.from({ length: 12 }).map((_, i) => (
+                        <div key={i} className="glass" style={{ padding: '32px 24px', borderRadius: '24px', height: '200px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '12px' }}>
+                            <Skeleton width="80%" height="1.5rem" />
+                            <Skeleton width="50%" height="1rem" />
+                            <Skeleton width="60%" height="30px" borderRadius="12px" style={{ marginTop: 'auto' }} />
+                        </div>
+                    ))}
+                </div>
+            </div>
+        );
+    }
+
     return (
         <>
             <div className={`ldb-root admin-container`} style={{ minHeight: '100vh', background: 'var(--bg-dark)' }}>
                 <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '32px', gap: '16px', flexWrap: 'wrap' }}>
                     <div>
                         <h1 style={{ fontSize: 'clamp(1.4rem, 5vw, 2.2rem)', color: 'var(--text-main)', fontWeight: '800', letterSpacing: '-0.04em', lineHeight: 1.1 }}>FooodWeb ADMIN</h1>
-                        <p style={{ color: 'var(--text-muted)', fontSize: '0.88rem', fontWeight: '500', marginTop: '4px' }}>Dashboard & Operations</p>
+                        <p style={{ color: 'var(--text-muted)', fontSize: '0.88rem', fontWeight: '500', marginTop: '4px' }}>Sales Dashboard & Operations</p>
                     </div>
                     <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }} className="header-actions">
                         <div style={{ position: 'relative', display: 'flex', gap: '8px' }}>
@@ -974,7 +1018,7 @@ const AdminPage = () => {
                                     cursor: 'pointer'
                                 }}
                             >
-                                📊 Dashboard
+                                📊 Sales Dashboard
                             </button>
                             <button
                                 onClick={() => setShowSettingsMenu(!showSettingsMenu)}

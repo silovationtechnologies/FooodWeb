@@ -4,6 +4,9 @@ import { supabase } from '../lib/supabase';
 import MenuCard from '../components/MenuCard';
 import CartBar from '../components/CartBar';
 
+import Skeleton from '../components/Skeleton';
+import SkeletonMenuCard from '../components/SkeletonMenuCard';
+
 const MenuPage = () => {
     const [categories, setCategories] = useState([{ id: 'all', name: 'All' }]);
     const [items, setItems] = useState([]);
@@ -455,7 +458,14 @@ const MenuPage = () => {
                 scrollbarWidth: 'none',
                 WebkitOverflowScrolling: 'touch',
             }}>
-                {categories.map(cat => {
+                {loading ? (
+                    Array.from({ length: 5 }).map((_, i) => (
+                        <div key={i} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '10px' }}>
+                            <Skeleton width="72px" height="72px" borderRadius="22px" />
+                            <Skeleton width="50px" height="10px" />
+                        </div>
+                    ))
+                ) : categories.map(cat => {
                     const isActive = activeCategory === (cat.id === 'all' ? 'all' : cat.name);
                     return (
                         <button
@@ -519,17 +529,10 @@ const MenuPage = () => {
             </div>
 
             {loading ? (
-                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '120px 0', gap: '20px' }}>
-                    <div style={{
-                        width: '44px',
-                        height: '44px',
-                        borderRadius: '50%',
-                        border: '3px solid rgba(255,255,255,0.08)',
-                        borderTopColor: 'rgba(167,139,250,0.8)',
-                        animation: 'spin 0.8s linear infinite',
-                        boxShadow: '0 0 20px rgba(167,139,250,0.2)'
-                    }} />
-                    <p style={{ color: 'var(--text-faint)', fontSize: '0.85rem', fontWeight: '600', letterSpacing: '0.08em', textTransform: 'uppercase' }}>Loading Menu</p>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '14px', paddingBottom: '120px' }}>
+                    {Array.from({ length: 6 }).map((_, i) => (
+                        <SkeletonMenuCard key={i} />
+                    ))}
                 </div>
             ) : (
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '14px', paddingBottom: '120px' }}>

@@ -19,8 +19,8 @@ const PricingPage = () => {
       'Real-Time Order Queue Management',
       'Live Order Status Tracking',
     ]},
-    { category: 'Admin Dashboard', items: [
-      'Detailed Revenue Analytics Dashboard',
+    { category: 'Admin Sales Dashboard', items: [
+      'Detailed Sales Dashboard Analytics',
       'Daily / Monthly Revenue Breakdown',
       'Cash vs Online Payment Tracking',
       'Order History with Full Audit Trail',

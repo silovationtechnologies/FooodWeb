@@ -78,10 +78,9 @@ const Navbar = () => {
             ))}
           </div>
 
-          {/* CTA */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 16 }} className="desktop-nav">
             <button
-              onClick={() => navigate('/login')}
+              onClick={() => navigate('/admin')}
               style={{
                 background: 'none',
                 border: 'none',
@@ -94,12 +93,12 @@ const Navbar = () => {
                 transition: 'color 0.2s',
               }}
               onMouseEnter={(e) => e.target.style.color = '#1a1a2e'}
-              onMouseLeave={(e) => e.target.style.color = '#64748b'}
+              onMouseLeave={(e) => { if (e.target) e.target.style.color = '#64748b'; }}
             >
-              Log in
+              See Demo
             </button>
             <button
-              onClick={() => navigate('/login')}
+              onClick={() => navigate('/contact')}
               style={{
                 background: '#6366f1',
                 color: '#fff',
@@ -177,10 +176,27 @@ const Navbar = () => {
             </Link>
           ))}
           <button
-            onClick={() => { navigate('/login'); setIsOpen(false); }}
+            onClick={() => { navigate('/admin'); setIsOpen(false); }}
             style={{
               width: '100%',
               marginTop: 16,
+              background: 'none',
+              border: '1px solid #e2e8f0',
+              color: '#64748b',
+              padding: '12px',
+              borderRadius: 10,
+              fontSize: 15,
+              fontWeight: 600,
+              cursor: 'pointer',
+            }}
+          >
+            See Demo
+          </button>
+          <button
+            onClick={() => { navigate('/contact'); setIsOpen(false); }}
+            style={{
+              width: '100%',
+              marginTop: 12,
               background: '#6366f1',
               color: '#fff',
               border: 'none',

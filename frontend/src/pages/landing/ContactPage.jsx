@@ -1,8 +1,17 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { motion } from 'framer-motion';
 import { Mail, Phone, MapPin, Send } from 'lucide-react';
 
 const ContactPage = () => {
+  const [formData, setFormData] = useState({
+    name: '',
+    phone: '',
+    email: '',
+    cafe: '',
+    location: '',
+    description: ''
+  });
+
   const inputStyle = {
     width: '100%',
     padding: '12px 16px',
@@ -31,6 +40,43 @@ const ContactPage = () => {
     gap: 16,
     padding: '20px 0',
     borderBottom: '1px solid #f1f5f9',
+  };
+
+  const handleWhatsAppSubmit = (e) => {
+    e.preventDefault();
+    const { name, phone, email, cafe, location, description } = formData;
+    
+    if (!name || !phone || !email || !cafe || !location || !description) {
+      alert("Please fill in all fields before submitting.");
+      return;
+    }
+
+    const message = `✨ *New Contact Inquiry* ✨\n\n` +
+      `👤 *Name:* ${name}\n` +
+      `☎️ *Phone:* ${phone}\n` +
+      `📧 *Email:* ${email}\n\n` +
+      `🏢 *Cafe Name:* ${cafe}\n` +
+      `📍 *Location:* ${location}\n` +
+      `📝 *Requirements:* ${description}\n\n` +
+      `_Sent via FooodWeb Website_`;
+
+    const encodedMessage = encodeURIComponent(message);
+    const numbers = ['919284074909', '917020665405'];
+    
+    // Open primary number
+    window.open(`https://wa.me/${numbers[0]}?text=${encodedMessage}`, '_blank');
+    
+    // Attempt second number with a slight delay to help browser handle multiple popups
+    setTimeout(() => {
+      window.open(`https://wa.me/${numbers[1]}?text=${encodedMessage}`, '_blank');
+    }, 600);
+
+    alert("Inquiry Sent! Opening WhatsApp message windows for both support numbers.");
+  };
+
+  const handleChange = (e) => {
+    const { name, value } = e.target;
+    setFormData(prev => ({ ...prev, [name]: value }));
   };
 
   return (
@@ -69,31 +115,91 @@ const ContactPage = () => {
             }}
           >
             <h3 style={{ fontSize: 20, fontWeight: 700, color: '#0f172a', marginBottom: 24 }}>Send a message</h3>
-            <form style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+            <form onSubmit={handleWhatsAppSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+              <div>
+                <label style={labelStyle}>Full Name</label>
+                <input 
+                   name="name"
+                   value={formData.name}
+                   onChange={handleChange}
+                   type="text" 
+                   placeholder="John Doe" 
+                   style={inputStyle} 
+                   onFocus={(e) => e.target.style.borderColor = '#6366f1'} 
+                   onBlur={(e) => e.target.style.borderColor = '#e2e8f0'} 
+                />
+              </div>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
                 <div>
-                  <label style={labelStyle}>First Name</label>
-                  <input type="text" placeholder="John" style={inputStyle} onFocus={(e) => e.target.style.borderColor = '#6366f1'} onBlur={(e) => e.target.style.borderColor = '#e2e8f0'} />
+                  <label style={labelStyle}>Phone Number</label>
+                  <input 
+                    name="phone"
+                    value={formData.phone}
+                    onChange={handleChange}
+                    type="tel" 
+                    placeholder="+91 98765 43210" 
+                    style={inputStyle} 
+                    onFocus={(e) => e.target.style.borderColor = '#6366f1'} 
+                    onBlur={(e) => e.target.style.borderColor = '#e2e8f0'} 
+                  />
                 </div>
                 <div>
-                  <label style={labelStyle}>Last Name</label>
-                  <input type="text" placeholder="Doe" style={inputStyle} onFocus={(e) => e.target.style.borderColor = '#6366f1'} onBlur={(e) => e.target.style.borderColor = '#e2e8f0'} />
+                  <label style={labelStyle}>Email Address</label>
+                  <input 
+                    name="email"
+                    value={formData.email}
+                    onChange={handleChange}
+                    type="email" 
+                    placeholder="john@example.com" 
+                    style={inputStyle} 
+                    onFocus={(e) => e.target.style.borderColor = '#6366f1'} 
+                    onBlur={(e) => e.target.style.borderColor = '#e2e8f0'} 
+                  />
+                </div>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+                <div>
+                  <label style={labelStyle}>Cafe / Restaurant Name</label>
+                  <input 
+                    name="cafe"
+                    value={formData.cafe}
+                    onChange={handleChange}
+                    type="text" 
+                    placeholder="The Majestic" 
+                    style={inputStyle} 
+                    onFocus={(e) => e.target.style.borderColor = '#6366f1'} 
+                    onBlur={(e) => e.target.style.borderColor = '#e2e8f0'} 
+                  />
+                </div>
+                <div>
+                  <label style={labelStyle}>Location</label>
+                  <input 
+                    name="location"
+                    value={formData.location}
+                    onChange={handleChange}
+                    type="text" 
+                    placeholder="City, State" 
+                    style={inputStyle} 
+                    onFocus={(e) => e.target.style.borderColor = '#6366f1'} 
+                    onBlur={(e) => e.target.style.borderColor = '#e2e8f0'} 
+                  />
                 </div>
               </div>
               <div>
-                <label style={labelStyle}>Email</label>
-                <input type="email" placeholder="john@example.com" style={inputStyle} onFocus={(e) => e.target.style.borderColor = '#6366f1'} onBlur={(e) => e.target.style.borderColor = '#e2e8f0'} />
-              </div>
-              <div>
-                <label style={labelStyle}>Restaurant Name</label>
-                <input type="text" placeholder="The Majestic" style={inputStyle} onFocus={(e) => e.target.style.borderColor = '#6366f1'} onBlur={(e) => e.target.style.borderColor = '#e2e8f0'} />
-              </div>
-              <div>
-                <label style={labelStyle}>Message</label>
-                <textarea rows={4} placeholder="How can we help?" style={{ ...inputStyle, resize: 'none' }} onFocus={(e) => e.target.style.borderColor = '#6366f1'} onBlur={(e) => e.target.style.borderColor = '#e2e8f0'} />
+                <label style={labelStyle}>Description</label>
+                <textarea 
+                  name="description"
+                  value={formData.description}
+                  onChange={handleChange}
+                  rows={4} 
+                  placeholder="Tell us about your requirements..." 
+                  style={{ ...inputStyle, resize: 'none' }} 
+                  onFocus={(e) => e.target.style.borderColor = '#6366f1'} 
+                  onBlur={(e) => e.target.style.borderColor = '#e2e8f0'} 
+                />
               </div>
               <button
-                type="button"
+                type="submit"
                 style={{
                   width: '100%',
                   padding: '14px',
@@ -111,10 +217,10 @@ const ContactPage = () => {
                   boxShadow: '0 2px 8px rgba(99,102,241,0.25)',
                   transition: 'all 0.2s',
                 }}
-                onMouseEnter={(e) => { e.target.style.background = '#4f46e5'; }}
-                onMouseLeave={(e) => { e.target.style.background = '#6366f1'; }}
+                onMouseEnter={(e) => { e.currentTarget.style.background = '#4f46e5'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = '#6366f1'; }}
               >
-                <Send size={18} /> Send Message
+                <Send size={18} /> Get Started
               </button>
             </form>
           </motion.div>

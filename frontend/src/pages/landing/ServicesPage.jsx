@@ -7,7 +7,7 @@ const ServicesPage = () => {
     { title: 'Corporate Website', desc: 'A sleek, modern website that puts your brand front and center — no aggregator needed.', icon: <LayoutDashboard size={26} />, color: '#6366f1', bg: '#eef2ff' },
     { title: 'Smart QR Ordering', desc: 'Elegant QR-based menu allowing direct table ordering with zero errors.', icon: <QrCode size={26} />, color: '#059669', bg: '#ecfdf5' },
     { title: 'Menu Management', desc: 'Update prices, toggle availability, and manage categories in real-time.', icon: <FileText size={26} />, color: '#d97706', bg: '#fffbeb' },
-    { title: 'Table Management', desc: 'Dedicated admin dashboard built for peak-hour efficiency.', icon: <Users size={26} />, color: '#dc2626', bg: '#fef2f2' },
+    { title: 'Table Management', desc: 'Dedicated sales dashboard built for peak-hour efficiency.', icon: <Users size={26} />, color: '#dc2626', bg: '#fef2f2' },
     { title: 'Live Order Tracking', desc: 'Monitor orders in real-time to improve operational metrics.', icon: <Clock size={26} />, color: '#0284c7', bg: '#f0f9ff' },
     { title: 'Data Privacy', desc: 'Own your customer database. No data leaks to competitors.', icon: <Shield size={26} />, color: '#7c3aed', bg: '#f5f3ff' },
     { title: 'Advertising Shoot', desc: 'Professional-grade media included in the premium package.', icon: <Camera size={26} />, color: '#db2777', bg: '#fdf2f8' },

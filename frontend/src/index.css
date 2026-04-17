@@ -400,6 +400,35 @@ input::placeholder { color: var(--text-faint); }
 .animate-pop     { animation: popIn 0.4s var(--ease-bounce) both; }
 .animate-pulse3d { animation: pulse3d 2s ease-in-out infinite; }
 
+@keyframes shimmer {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+
+.skeleton-shimmer {
+  position: relative;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.skeleton-shimmer::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.05) 20%,
+    rgba(255, 255, 255, 0.12) 60%,
+    transparent 100%
+  );
+  animation: shimmer 2s infinite;
+}
+
 
 /* ============================================================
    LAYOUT
